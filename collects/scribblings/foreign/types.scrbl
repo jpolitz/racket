@@ -151,6 +151,15 @@ correspond to @racket[_int16]. The @racket[_int] aliases correspond to
 the @racket[_intptr] aliases correspond to either
 @racket[_int32] or @racket[_int64], depending on the platform.}
 
+@defthing*[([_size ctype?]
+            [_ssize ctype?]
+            [_ptrdiff ctype?]
+            [_intmax ctype?]
+            [_uintmax ctype?])]{
+
+More aliases for basic integer types. The @racket[_size] and
+@racket[_uintmax] types are aliases for @racket[_uintptr], and
+the rest are aliases for @racket[_intptr].}
 
 @defthing*[([_fixnum ctype?]
             [_ufixnum ctype?])]{
@@ -179,6 +188,13 @@ numbers are accepted for conversion via both @racket[_float] and
 coerce C values to double-precision Racket numbers.
 The type @racket[_double*]
 coerces any Racket real number to a C @cpp{double}.}
+
+@defthing[_longdouble ctype?]{
+
+Represents the @cpp{long double} type on platforms where it is
+supported, in which case Racket @tech[#:doc
+reference.scrbl]{extflonums} convert to and from @cpp{long double}
+values.}
 
 @; ------------------------------------------------------------
 
@@ -356,9 +372,15 @@ generates @racket[#f] for a cpointer generated via the
 )]{
 
 A type that can be used with any Racket object; it corresponds to the
-@cpp{Scheme_Object*} type of Racket's C API (see
-@|InsideRacket|).  It is useful only for libraries that are aware of
-Racket's C API.}
+@cpp{Scheme_Object*} type of Racket's C API (see @|InsideRacket|). The
+@racket[_racket] or @racket[_scheme] type is useful only for libraries
+that are aware of Racket's C API.
+
+As a result type with a function type, @racket[_racket] or
+@racket[_scheme] permits multiple values, but multiple values are not
+allowed in combination with a true value for
+@racket[#:in-original-place?] or @racket[#:async-apply] in
+@racket[_cprocedure] or @racket[_fun].}
 
 
 @defthing[_fpointer ctype?]{
@@ -863,19 +885,19 @@ A @tech{custom function type} like @racket[_list], except that it uses
 Racket vectors instead of lists.}
 
 
-@defform*[#:literals (o)
-          [(_bytes o len-expr)
-           _bytes]]{
+@defform*[#:id _bytes
+          #:literals (o)
+          [_bytes
+           (_bytes o len-expr)]]{
 
 A @tech{custom function type} that can be used by itself as a simple
 type for a byte string as a C pointer.  Alternatively, the second form
 is for a pointer return value, where the size should be explicitly
 specified.
 
-There is no need for other modes: input or input/output would be just
-like @racket[_bytes], since the string carries its size information
-(there is no real need for the @racket[o] part of the syntax, but it
-is present for consistency with the above macros).}
+There is no need for other modes analogous to those of @racket[_ptr]:
+input or input/output would be just like @racket[_bytes], since the
+string carries its size information.}
 
 
 @; ------------------------------------------------------------

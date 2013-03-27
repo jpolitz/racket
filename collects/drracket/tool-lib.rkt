@@ -163,6 +163,14 @@ all of the names in the tools library, for use defining keybindings
     since this procedure is invoked on DrRacket's eventspace's handler thread.})
  
  (proc-doc/names
+  drracket:module-language-tools:register-online-expansion-pref
+  (-> (-> (is-a?/c vertical-panel%) void?) void?)
+  (func)
+  @{Registers @racket[func] so that it is called while building the
+    preferences panel. The function is passed a panel that contains 
+    other configuration controls for online expansion.})
+ 
+ (proc-doc/names
   drracket:module-language:add-module-language
   (-> any)
   ()
@@ -1156,14 +1164,23 @@ all of the names in the tools library, for use defining keybindings
  
  (proc-doc/names
   drracket:language-configuration:add-language
-  ((and/c (is-a?/c drracket:language:language<%>)
-          drracket:language:object/c)
-   . -> . void?)
-  (language)
+  (->* ((and/c (is-a?/c drracket:language:language<%>)
+               drracket:language:object/c))
+       (#:allow-executable-creation? boolean?)
+       void?)
+  ((language) ((allow-executable-creation? #f)))
   
   @{@phase[2]
      
-     Adds @racket[language] to the languages offerend by DrRacket.})
+     Adds @racket[language] to the languages offered by DrRacket.
+     
+     If @racket[allow-executable-creation?] is @racket[#f], then
+     choosing the @onscreen{Create Executable...} menu item results
+     in a dialog box saying that executable creation is disabled.
+     If it is @racket[#t], then the 
+     @method[drracket:language:language<%> create-executable]
+     is called when that menu item is selected (after checking
+     to make sure the file is saved).})
  
  (proc-doc/names
   drracket:language-configuration:get-settings-preferences-symbol

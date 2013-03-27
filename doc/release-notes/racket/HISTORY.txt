@@ -1,19 +1,93 @@
-Version 5.3.1.7
-compiler/zo-structs: generalize flonum? field to type
- field in localref, let-one, and fun 
+Version 5.3.3.7
+Added module-compiled-cross-phase-persistent?
+Added 'so-mode mode for system-type
+Changed syntax-case, etc. to support box patterns
+ffi/unsafe: changed ffi-lib to use (system-type 'so-mode)
+slideshow/balloon: added balloon-enable-3d
+slideshow: added interactive
+scribble/manual: added #:id option to defthing
+scribble/srcdoc: added begin-for-doc
+syntax/datum: Changed datum-case to support box patterns
+syntax-color: added special support for dont-stop values;
+ this change is backwards incompatible for code that calls
+ lexers and may call unknown lexers
+racket/gui/base: moved warp-pointer from canvas<%> to
+ window<%> and restored its functionality
 
-Version 5.3.1.6
-racket/unsafe/ops: added unsafe-cons-list
+Version 5.3.3.6
+Added "phase-collapse" module inference and instantiation
+compiler/zo-structs: added flags field to mod
+racket/kernel: removed #%top-interaction
+racket/kernel/init: added
 
-Version 5.3.1.5
-racket/gui: added get-current-mouse-state
+Version 5.3.3.4
+Added impersonator-ephemeron
 
-Version 5.3.1.2
-compiler/zo-structs: added a constantness field to module-variable
+Version 5.3.3.3
+ffi/unsafe: added _size, _ssize, _ptrdiff, _intmax, _uintmax
+ffi/vector: added f8vectors
+scribble: 'toc-hidden style on a part no longer hides ToC
+ entries for sub-parts when rendering as HTML
 
-Version 5.3.1.1
+Version 5.3.3.2
+Added port-counts-lines?
+
+Version 5.3.3.1
+Change sync, wrap-evt, and handle-evt to support multiple
+ evt results
+
+Version 5.3.2.3
+Added extflonums
+racket/extflonum: added
+racket/unsafe/ops: added extflonum operations
+racket/date: changed current-date to provide nanoseconds,
+ added date*->seconds
+racket/gui/base: changed menu-bar% get-frame method to
+ return 'root for root menu bar
+syntax-color/racket-lexer: added 'hash-colon-keyword 
+ (which also affects syntax-color/scheme-lexer,
+  syntax-color/module-lexer, and syntax-color/scribble-lexer)
+
+Version 5.3.2.2
+Added file-truncate
+scribble/latex-properties: added command-extras
+
+Version 5.3.2.1
+srfi/19: made compatible with date* structs, produces
+ lax-date struct for backwards compatibility
+
+Version 5.3.3, February 2013
+No changes
+
+Version 5.3.2, January 2013
+Changed case to use equal? instead of eqv?
+Changed log-message to support a name argument
+Changed the synchronization result of a log receiver to include an
+ event name
+Added exn:fail:filesystem:errno and exn:fail:network:errno
+Added phantom byte strings
+Added 'word mode to system-type
 Added arguments to impersonate-prompt-tag and chaperone-prompt-tag
  to support interposition on non-composable continuation results
+Add #fx() and #fl() reader forms for flvectors and fxvectors
+racket/unsafe/ops: added unsafe-cons-list
+racket/gui: added get-current-mouse-state, and added
+ display-changed to frame%
+racket/serialize: fxvectors and flvectors are serializable
+racket/net: added uri-path-segment-unreserved-encode
+racket/url: added current-url-encode-mode
+racket/date: fixed 'iso-8601 date formatting
+scribble/tag: added
+scribble/base: added make-section-tag, taglet?
+r5rs, r6rs: fixed case and cond to disallow internal definitions
+ in clauses
+ffi/com: added com-get-property*
+file/untar: added
+file/untgz: added
+file/unzip: added
+compiler/zo-structs: generalize flonum? field to type
+ field in localref, let-one, and fun 
+compiler/zo-structs: added a constantness field to module-variable
 
 Version 5.3.1, October 2012
 Changed make-log-receiver to accept a logger name as an
@@ -22,6 +96,7 @@ Addded define-logger
 Changed -W, -L, PLTSTDERR, and PLTSYSLOG to support log
  filters of the form "<level> <name>=<level> ..."
 Changed log-error, etc., to support format mode
+Changed case to dispatch in logarithmic time
 Added racket/format, which is re-exported by racket
 Added #:break and #:final clauses to for forms
 Added exn:break:hang-up and exn:break:terminate, added

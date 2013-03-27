@@ -1,6 +1,6 @@
 /*
   Racket
-  Copyright (c) 2006-2012 PLT Scheme Inc.
+  Copyright (c) 2006-2013 PLT Design Inc.
 
     This library is free software; you can redistribute it and/or
     modify it under the terms of the GNU Library General Public
@@ -699,6 +699,7 @@ static void init_future_thread(Scheme_Future_State *fs, int i)
   t = mz_proc_thread_create_w_stacksize(worker_thread_future_loop, &params, FUTURE_C_STACK_SIZE);
   mzrt_sema_wait(params.ready_sema);
   mzrt_sema_destroy(params.ready_sema);
+  params.ready_sema = NULL;
 
   fts->t = t;
 	

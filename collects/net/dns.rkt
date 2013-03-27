@@ -1,16 +1,125 @@
 #lang racket/base
 
-(require racket/udp
-         racket/system)
+;; DNS query library for Racket
 
-(provide dns-get-address
-         dns-get-name
-         dns-get-mail-exchanger
-         dns-find-nameserver)
+(require racket/bool
+         racket/contract
+         racket/format
+         racket/list
+         racket/match
+         racket/string
+         racket/system
+         racket/udp
+         (only-in unstable/sequence in-slice))
+
+(provide (contract-out
+          [dns-get-address
+           (->* (ip-address-string? string?)
+                (#:ipv6? any/c)
+                ip-address-string?)]
+          [dns-get-name
+           (-> ip-address-string? ip-address-string? string?)]
+          [dns-get-mail-exchanger
+           (-> ip-address-string? string? (or/c bytes? string?))]
+          [dns-find-nameserver
+           (-> (or/c ip-address-string? #f))]))
+
+(module+ test (require rackunit))
 
 ;; UDP retry timeout:
 (define INIT-TIMEOUT 50)
 
+;; Contract utilities and Data Definitions
+;;
+;; An LB is a (Listof Bytes)
+;;
+;; An IPAddressString passes the following predicate
+(define (ip-address-string? val)
+  (and (string? val)
+       (or (ipv4-string? val)
+           (ipv6-string? val))))
+
+;; String -> Boolean
+;; Check if the input string represents an IPv4 address
+(define (ipv4-string? str)
+  ;; String -> Boolean
+  ;; check if the given string has leading zeroes
+  (define (has-leading-zeroes? str)
+    (and (> (string-length str) 1)
+         (char=? (string-ref str 0) #\0)))
+  (define matches
+    (regexp-match #px"^(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})$"
+                  str))
+  (and matches
+       (= (length matches) 5)
+       ;; check that each octet field is an octet
+       (andmap byte? (map string->number (cdr matches)))
+       ;; leading zeroes lead to query errors
+       (not (ormap has-leading-zeroes? matches))))
+
+;; String -> Boolean
+;; Check if the input string represents an IPv6 address
+;; TODO: support dotted quad notation
+(define (ipv6-string? str)
+  (define re-::/: #px"^([0-9a-fA-F]{1,4})(::|:)")
+  (define re-:: #px"^()(::)")
+  (define re-: #px"^([0-9a-fA-F]{1,4})(:)")
+  (define re-end #px"^[0-9a-fA-F]{1,4}$")
+  (or (regexp-match? #px"^::$" str) ; special case
+      (let loop ([octet-pairs '()]  ; keep octet-pairs to count
+                 [::? #f]           ; seen a :: in the string yet?
+                 [str str])
+        ;; match digit groups and a separator
+        (define matches
+          (if ::?
+              (regexp-match re-: str)
+              (or (regexp-match re-:: str)
+                  (regexp-match re-::/: str))))
+        (cond [matches
+               (match-define (list match digits sep) matches)
+               (define rest (substring str (string-length match)))
+               ;; we need to make sure there is only one :: at most
+               (if (or ::? (string=? sep "::"))
+                   (loop (cons digits octet-pairs) #t rest)
+                   (loop (cons digits octet-pairs) #f rest))]
+              [else
+               (and ;; if there isn't a ::, we need 7+1 octet-pairs
+                    (implies (not ::?) (= (length octet-pairs) 7))
+                    ;; this is the +1 octet pair
+                    (regexp-match? re-end str))]))))
+
+(module+ test
+  (check-true (ip-address-string? "8.8.8.8"))
+  (check-true (ip-address-string? "12.81.255.109"))
+  (check-true (ip-address-string? "192.168.0.1"))
+  (check-true (ip-address-string? "2001:0db8:85a3:0000:0000:8a2e:0370:7334"))
+  (check-true (ip-address-string? "2001:200:dff:fff1:216:3eff:feb1:44d7"))
+  (check-true (ip-address-string? "2001:db8:85a3:0:0:8a2e:370:7334"))
+  (check-true (ip-address-string? "2001:db8:85a3::8a2e:370:7334"))
+  (check-true (ip-address-string? "0:0:0:0:0:0:0:1"))
+  (check-true (ip-address-string? "0:0:0:0:0:0:0:0"))
+  (check-true (ip-address-string? "::"))
+  (check-true (ip-address-string? "::0"))
+  (check-true (ip-address-string? "::ffff:c000:0280"))
+  (check-true (ip-address-string? "2001:db8::2:1"))
+  (check-true (ip-address-string? "2001:db8:0:0:1::1"))
+  (check-false (ip-address-string? ""))
+  (check-false (ip-address-string? ":::"))
+  (check-false (ip-address-string? "::0::"))
+  (check-false (ip-address-string? "2001::db8::2:1"))
+  (check-false (ip-address-string? "2001:::db8:2:1"))
+  (check-false (ip-address-string? "52001:db8::2:1"))
+  (check-false (ip-address-string? "80.8.800.8"))
+  (check-false (ip-address-string? "80.8.800.0"))
+  (check-false (ip-address-string? "080.8.800.8"))
+  (check-false (ip-address-string? "vas8.8.800.8"))
+  (check-false (ip-address-string? "80.8.128.8dd"))
+  (check-false (ip-address-string? "0.8.800.008"))
+  (check-false (ip-address-string? "0.8.800.a8"))
+  (check-false (ip-address-string? "potatoes"))
+  (check-false (ip-address-string? "127.0.0")))
+
+;; A Type is one of the following
 (define types
   '((a 1)
     (ns 2)
@@ -27,13 +136,17 @@
     (hinfo 13)
     (minfo 14)
     (mx 15)
-    (txt 16)))
+    (txt 16)
+    (aaaa 28)))
 
+;; A Class is one of the following
 (define classes
   '((in 1)
     (cs 2)
     (ch 3)
     (hs 4)))
+
+;;;
 
 (define (cossa i l)
   (cond [(null? l) #f]
@@ -53,27 +166,42 @@
      (arithmetic-shift c 8)
      d))
 
+;; Bytes -> LB
+;; Convert the domain name into a sequence of labels, where each
+;; label is a length octet and then that many octets
 (define (name->octets s)
   (let ([do-one (lambda (s) (cons (bytes-length s) (bytes->list s)))])
     (let loop ([s s])
       (let ([m (regexp-match #rx#"^([^.]*)[.](.*)" s)])
         (if m
-          (append (do-one (cadr m)) (loop (caddr m)))
-          (append (do-one s) (list 0)))))))
+            (append (do-one (cadr m)) (loop (caddr m)))
+            ;; terminate with zero length octet
+            (append (do-one s) (list 0)))))))
 
+;; The query header. See RFC1035 4.1.1 for details
+;;
+;; The opcode & flags are set as:
+;; QR | OPCODE  | AA | TC | RD | RA | Z     | RCODE   |
+;; 0  | 0 0 0 0 | 0  | 0  | 1  | 0  | 0 0 0 | 0 0 0 0 |
+;;
 (define (make-std-query-header id question-count)
-  (append (number->octet-pair id)
-          (list 1 0) ; Opcode & flags (recusive flag set)
-          (number->octet-pair question-count)
-          (number->octet-pair 0)
-          (number->octet-pair 0)
-          (number->octet-pair 0)))
+  (append (number->octet-pair id)             ; 16-bit random identifier
+          (list 1 0)                          ; Opcode & flags
+          (number->octet-pair question-count) ; QDCOUNT
+          (number->octet-pair 0)              ; ANCOUNT
+          (number->octet-pair 0)              ; NSCOUNT
+          (number->octet-pair 0)))            ; ARCOUNT
 
+;; Int16 Bytes Type Class -> LB
+;; Construct a DNS query message
 (define (make-query id name type class)
   (append (make-std-query-header id 1)
-          (name->octets name)
-          (number->octet-pair (cadr (assoc type types)))
-          (number->octet-pair (cadr (assoc class classes)))))
+          ;; Question section. See RF1035 4.1.2
+          (name->octets name)                 ; QNAME
+          (number->octet-pair                 ; QTYPE
+           (cadr (assoc type types)))
+          (number->octet-pair                 ; QCLASS
+           (cadr (assoc class classes)))))
 
 (define (add-size-tag m)
   (append (number->octet-pair (length m)) m))
@@ -151,6 +279,7 @@
       (let-values ([(rr start) (parse start reply)])
         (loop (sub1 n) start (cons rr accum))))))
 
+;; NameServer String Type Class -> (Values Boolean LB LB LB LB LB)
 (define (dns-query nameserver addr type class)
   (unless (assoc type types)
     (raise-type-error 'dns-query "DNS query type" type))
@@ -159,7 +288,7 @@
 
   (let* ([query (make-query (random 256) (string->bytes/latin-1 addr)
                             type class)]
-         [udp (udp-open-socket)]
+         [udp (udp-open-socket nameserver 53)]
          [reply
           (dynamic-wind
             void
@@ -209,7 +338,12 @@
             (values (positive? (bitwise-and #x4 v0))
                     qds ans nss ars reply)))))))
 
+;; A cache for DNS query data
+;; Stores a (List Boolean LB LB LB LB LB)
 (define cache (make-hasheq))
+
+;; NameServer Address Type Class -> (Values Boolean LB LB LB LB LB)
+;; Execute a DNS query and cache it
 (define (dns-query/cache nameserver addr type class)
   (let ([key (string->symbol (format "~a;~a;~a;~a" nameserver addr type class))])
     (let ([v (hash-ref cache key (lambda () #f))])
@@ -224,8 +358,43 @@
   (format "~a.~a.~a.~a"
           (list-ref s 0) (list-ref s 1) (list-ref s 2) (list-ref s 3)))
 
+;; Convert a list of bytes representing an IPv6 address to a string
+(define (ipv6->string lob)
+  (define two-octets
+    (for/list ([oct-pair (in-slice 2 (in-list lob))])
+      (define oct1 (car oct-pair))
+      (define oct2 (cadr oct-pair))
+      (+ (arithmetic-shift oct1 8) oct2)))
+  (define compressed (compress two-octets))
+  (define compressed-strs
+    (for/list ([elem compressed])
+     (if (eq? elem '::)
+         "" ; string-join will turn this into ::
+         (~r elem #:base 16))))
+  (string-join compressed-strs ":"))
+
+;; (Listof Number) -> (Listof (U Number '::))
+;; Compress an IPv6 address to its shortest representation
+(define (compress lon)
+  (let loop ([acc '()] [lon lon])
+    (cond [(empty? lon) (reverse acc)]
+          [else
+           (define zeroes (for/list ([n lon] #:break (not (zero? n))) n))
+           (define num-zs (length zeroes))
+           (if (<= num-zs 1)
+               (loop (cons (car lon) acc) (cdr lon))
+               (append (reverse acc) '(::) (drop lon num-zs)))])))
+
+(module+ test
+  (check-equal? (compress '(0 0 0 5 5)) '(:: 5 5))
+  (check-equal? (compress '(0 5 5)) '(0 5 5))
+  (check-equal? (compress '(0 0 5 0 0 5)) '(:: 5 0 0 5))
+  (check-equal? (compress '(0 5 0 0 0 5)) '(0 5 :: 5)))
+
+;; (NameServer -> (Values Any LB Boolean)) NameServer -> Any
+;; Run the given query function, trying until an answer is found
 (define (try-forwarding k nameserver)
-  (let loop ([nameserver nameserver][tried (list nameserver)])
+  (let loop ([nameserver nameserver] [tried (list nameserver)])
     ;; Normally the recusion is done for us, but it's technically optional
     (let-values ([(v ars auth?) (k nameserver)])
       (or v
@@ -238,6 +407,14 @@
                       (not (member ns tried))
                       (loop ns (cons ns tried)))))))))
 
+;; String -> String
+;; Convert an IP address to a suitable format for a reverse lookup
+(define (ip->query-domain ip)
+  (if (ipv4-string? ip)
+      (ip->in-addr.arpa ip)
+      (ip->ip6.arpa ip)))
+
+;; Convert an IPv4 address for reverse lookup
 (define (ip->in-addr.arpa ip)
   (let ([result (regexp-match #rx"^([0-9]+)\\.([0-9]+)\\.([0-9]+)\\.([0-9]+)$"
                               ip)])
@@ -247,6 +424,45 @@
             (list-ref result 2)
             (list-ref result 1))))
 
+;; Convert an IPv6 address for reverse lookup
+(define (ip->ip6.arpa ip)
+  (define has-::? (regexp-match? #rx"::" ip))
+  (define octet-pair-strings
+    (cond [has-::?
+           (define without-:: (regexp-replace #rx"::" ip ":replace-me:"))
+           (define pieces (regexp-split #rx":" without-::))
+           (define num-pieces (sub1 (length pieces))) ; don't count replace-me
+           (flatten
+            ;; put in as many 0s needed to expand the ::
+            (for/list ([piece pieces])
+              (if (string=? piece "replace-me")
+                  (build-list (- 8 num-pieces) (λ _ "0"))
+                  piece)))]
+          [else (regexp-split #rx":" ip)]))
+  ;; convert to nibbles
+  (define nibbles
+    (for/fold ([nibbles '()])
+              ([two-octs octet-pair-strings])
+      (define n (string->number two-octs 16))
+      (define nib1 (arithmetic-shift (bitwise-and #xf000 n) -12))
+      (define nib2 (arithmetic-shift (bitwise-and #x0f00 n) -8))
+      (define nib3 (arithmetic-shift (bitwise-and #x00f0 n) -4))
+      (define nib4 (bitwise-and #x000f n))
+      (append (list nib4 nib3 nib2 nib1) nibbles)))
+  (string-append
+   (string-join
+    (for/list ([n nibbles]) (~r n #:base 16))
+    ".")
+   ".ip6.arpa"))
+
+(module+ test
+  (check-equal?
+   (ip->ip6.arpa "4321:0:1:2:3:4:567:89ab")
+   "b.a.9.8.7.6.5.0.4.0.0.0.3.0.0.0.2.0.0.0.1.0.0.0.0.0.0.0.1.2.3.4.ip6.arpa")
+  (check-equal?
+   (ip->ip6.arpa "2001:db8::567:89ab")
+   "b.a.9.8.7.6.5.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.8.b.d.0.1.0.0.2.ip6.arpa"))
+
 (define (get-ptr-list-from-ans ans)
   (filter (lambda (ans-entry) (eq? (list-ref ans-entry 1) 'ptr)) ans))
 
@@ -254,7 +470,7 @@
   (or (try-forwarding
        (lambda (nameserver)
          (let-values ([(auth? qds ans nss ars reply)
-                       (dns-query/cache nameserver (ip->in-addr.arpa ip) 'ptr 'in)])
+                       (dns-query/cache nameserver (ip->query-domain ip) 'ptr 'in)])
            (values (and (positive? (length (get-ptr-list-from-ans ans)))
                         (let ([s (rr-data (car (get-ptr-list-from-ans ans)))])
                           (let-values ([(name null) (parse-name s reply)])
@@ -263,19 +479,26 @@
        nameserver)
       (error 'dns-get-name "bad ip address")))
 
-(define (get-a-list-from-ans ans)
-  (filter (lambda (ans-entry) (eq? (list-ref ans-entry 1) 'a))
-          ans))
+;; Get resource records corresponding to the given type
+(define (get-records-from-ans ans type)
+  (for/list ([ans-entry ans]
+             #:when (eq? (list-ref ans-entry 1) type))
+    ans-entry))
 
-(define (dns-get-address nameserver addr)
-  (or (try-forwarding
-       (lambda (nameserver)
-         (let-values ([(auth? qds ans nss ars reply) (dns-query/cache nameserver addr 'a 'in)])
-           (values (and (positive? (length (get-a-list-from-ans ans)))
-                        (let ([s (rr-data (car (get-a-list-from-ans ans)))])
-                          (ip->string s)))
-                   ars auth?)))
-       nameserver)
+(define (dns-get-address nameserver addr #:ipv6? [ipv6? #f])
+  (define type (if ipv6? 'aaaa 'a))
+  (define (get-address nameserver)
+    (define-values (auth? qds ans nss ars reply)
+      (dns-query/cache nameserver addr type 'in))
+    (define answer-records (get-records-from-ans ans type))
+    (define address
+      (and (positive? (length answer-records))
+           (let ([data (rr-data (car answer-records))])
+             (if ipv6?
+                 (ipv6->string data)
+                 (ip->string data)))))
+    (values address ars auth?))
+  (or (try-forwarding get-address nameserver)
       (error 'dns-get-address "bad address")))
 
 (define (dns-get-mail-exchanger nameserver addr)

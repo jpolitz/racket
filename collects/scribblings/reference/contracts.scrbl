@@ -105,12 +105,6 @@ implement contracts @cite{Strickland12}.
 @section[#:tag "data-structure-contracts"]{Data-structure Contracts}
 @declare-exporting-ctc[racket/contract/base]
 
-@defproc[(flat-contract [predicate (any/c . -> . any/c)]) flat-contract?]{
-
-Constructs a @tech{flat contract} from @racket[predicate]. A value
-satisfies the contract if the predicate returns a true value.}
-
-
 @defproc[(flat-named-contract [type-name any/c]
                               [predicate (or/c flat-contract? (any/c . -> . any))]
                               [generator (or/c #f (-> contract (-> int? any))) #f])
@@ -246,7 +240,7 @@ between @racket[j] and @racket[k], inclusive.}
 A flat contract that requires the input to be an exact non-negative integer.}
 
 
-@defproc[(string-len/c [len exact-nonnegative-integer?]) flat-contract?]{
+@defproc[(string-len/c [len real?]) flat-contract?]{
 
 Returns a flat contract that recognizes strings that have fewer than
 @racket[len] characters.}
@@ -424,6 +418,7 @@ produced.  Otherwise, an impersonator contract is produced.
                                        maybe-dep-state
                                        contract-expr]]
                [field-name field-id
+                           (#:selector selector-id)
                            (field-id #:parent struct-id)]
                [maybe-lazy (code:line) #:lazy]
                [maybe-flat-or-impersonator (code:line) #:flat #:impersonator]
@@ -438,12 +433,18 @@ expression is evaluated each time a selector is applied, building a new contract
 for the fields based on the values of the @racket[dep-field-name] fields (the
 @racket[dep-field-name] syntax is the same as the @racket[field-name] syntax).
 If the field is a dependent field, then it is assumed that the contract is
-a chaperone, but not always a flat contract (and theus the entire @racket[struct/dc]
+a chaperone, but not always a flat contract (and thus the entire @racket[struct/dc]
 contract is not a flat contract).
 If this is not the case, and the contract is
 always flat then the field must be annotated with
 the @racket[#:flat], or the field must be annotated with
 @racket[#:chaperone] (in which case, it must be a mutable field).
+
+A @racket[field-name] is either an identifier naming a field in the first
+case, an identifier naming a selector in the second case indicated
+by the @racket[#:selector] keyword, or
+a field id for a struct that is a parent of @racket[struct-id], indicated
+by the @racket[#:parent] keyword.
 
 If the @racket[#:lazy] keyword appears, then the contract
 on the field is check lazily (only when a selector is applied);
@@ -482,10 +483,27 @@ inspect the entire tree.
 }
 
 
-@defproc[(parameter/c [c contract?]) contract?]{
+@defproc[(parameter/c [in contract?] [out contract? in])
+         contract?]{
 
 Produces a contract on parameters whose values must match
-@racket[contract].}
+@racket[_out]. When the value in the contracted parameter
+is set, it must match @racket[_in].
+
+@examples[#:eval (contract-eval)
+(define/contract current-snack
+  (parameter/c string?)
+  (make-parameter "potato-chip"))
+(define baked/c
+  (flat-named-contract 'baked/c (λ (s) (regexp-match #rx"baked" s))))
+(define/contract current-dinner
+  (parameter/c string? baked/c)
+  (make-parameter "turkey" (λ (s) (string-append "roasted " s))))
+
+(current-snack 'not-a-snack)
+(parameterize ([current-dinner "tofurkey"])
+  (current-dinner))
+]}
 
 
 @defproc[(procedure-arity-includes/c [n exact-nonnegative-integer?]) flat-contract?]{
@@ -625,6 +643,26 @@ multiple values.  It can only be used in a result position of contracts like
 Constructs a contract on a promise. The contract does not force the
 promise, but when the promise is forced, the contract checks that the
 result value meets the contract produced by @racket[expr].}
+
+@defproc[(flat-contract [predicate (any/c . -> . any/c)]) flat-contract?]{
+
+Constructs a @tech{flat contract} from @racket[predicate]. A value
+satisfies the contract if the predicate returns a true value.
+
+This function is a holdover from before flat contracts could be used
+directly as predicates. It exists today for backwards compatibilty.
+}
+
+
+@defproc[(flat-contract-predicate [v flat-contract?])
+         (any/c . -> . any/c)]{
+
+Extracts the predicate from a flat contract.
+
+This function is a holdover from before flat contracts could 
+be used directly as predicates. It exists today for backwards compatibility.
+}
+
 
 @; ------------------------------------------------------------------------
 
@@ -1747,6 +1785,12 @@ the other; both are provided for convenience and clarity.
              position @racket[b] has.
 }
 
+@defproc[(blame-update [b blame?] [pos any/c] [neg any/c]) blame?]{
+  Produces a @racket[blame?] object just like @racket[b] except
+             that it adds @racket[pos] and @racket[neg] to the positive
+             and negative parties of @racket[b] respectively.
+}
+
 @defproc[(raise-blame-error [b blame?]
                             [x any/c]
                             [fmt (or/c string?
@@ -2162,11 +2206,6 @@ For example,
 symbols, booleans, numbers, and other ordinary Racket values
 (that are defined as @tech{contracts}) are also
 flat contracts.}
-
-@defproc[(flat-contract-predicate [v flat-contract?])
-         (any/c . -> . any/c)]{
-
-Extracts the predicate from a flat contract.}
 
 @defproc[(contract-name [c contract?]) any/c]{
 Produces the name used to describe the contract in error messages.

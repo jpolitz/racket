@@ -7,8 +7,8 @@
 
 @title[#:tag "running"]{Running @exec{scribble}}
 
-The @exec{scribble} command-line tool (also available as @exec{raco
-scribble}) runs a Scribble document and renders it to a specific
+The @exec{scribble} command-line tool (also available as @as-index{@exec{raco
+scribble}}) runs a Scribble document and renders it to a specific
 format. Select a format with one of the following flags, where the
 output name @|fn| is by default the document source name without
 its file suffix:
@@ -39,6 +39,9 @@ its file suffix:
 
  @item{@DFlag{text} --- plain text in a single file
        @filepath{@|fn|.txt}, with non-ASCII content encoded as UTF-8}
+
+ @item{@DFlag{markdown} --- Markdown text in a single file
+       @filepath{@|fn|.md}, with non-ASCII content encoded as UTF-8}
 
 ]
 
@@ -103,17 +106,21 @@ HTML-format information is usable for Latex (or PDF) or text rendering.
 
 A Racket installation includes HTML-format cross-reference information
 for all installed documentation. Each document's information is in a
-separate file, so that loading all relevant files would be tedious. The
-@DPFlag{xref-in} flag loads cross-reference information by calling a
-specified module's function; in particular, the
-@racketmodname[setup/xref] module provides
-@racket[load-collections-xref] to load cross-reference information for
-all installed documentation. Thus,
+separate file, so that loading all relevant files would be tedious.
+The @PFlag{m} or @DPFlag{main-xref-in} flag loads cross-reference
+information for all installed documentation, so
 
-@commandline{scribble ++xref-in setup/xref load-collections-xref mine.scrbl}
+@commandline{scribble +m mine.scrbl}
 
 renders @filepath{mine.scrbl} to @filepath{mine.html} with
 cross-reference links to the Racket installation's documentation.
+
+The @DPFlag{xref-in} flag loads cross-reference information by calling
+a specified module's function. The @racketmodname[setup/xref] module
+provides @racket[load-collections-xref] to load cross-reference
+information for all installed documentation, and @PFlag{m} or
+@DPFlag{main-xref-in} is just a shorthand for @exec{++xref-in
+setup/xref load-collections-xref}.
 
 The @DFlag{redirect-main} flag redirects links to the local
 installation's documentation to a given URL, such as

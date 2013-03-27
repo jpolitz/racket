@@ -369,6 +369,7 @@ mz-manuals := (scribblings: "main/") ; generates main pages (next line)
                         "honu/")
               (doc: "*.{html|css|js|sxref}")
               (doc: "blueboxes.rktd")
+              (doc: "docindex.sqlite")
               (scribblings: "{{info|icons}.rkt|*.png}" "compiled")
 
 mr-base := (package: "gracket") (bin: "gracket-text")
@@ -554,22 +555,31 @@ plt-extras :+= (package: "slatex")
 
 ;; -------------------- planet
 mz-extras :+= (package: "planet")
-mz-extras :+= (package: "planet2")
+mz-extras :+= (package: "pkg")
 
 ;; -------------------- mrlib
-mr-extras :+= (- (+ (package: "mrlib/")
-                    (collects: "hierlist/")
-                    (collects: "icons/turn-{up|down}{|-click}.png")
-                    (tests: "aligned-pasteboard/")))
+mr-extras :+= (+ (package: "mrlib/")
+                 (collects: "hierlist/")
+                 (collects: "icons/turn-{up|down}{|-click}.png")
+                 (tests: "aligned-pasteboard/"))
+
+;; -------------------- pict library
+mr-extras :+= (- (+ (collects: "texpict/")
+                    (srcfile: "slideshow/pict.rkt")
+                    (srcfile: "slideshow/pict-convert.rkt"))
+                 (srcfile: "texpict/slideshow-run.rkt")
+                 (srcfile: "texpict/slideshow.rkt")
+                 (srcfile: "texpict/symbol.rkt"))
 
 ;; -------------------- sgl
 mr-extras :+= (package: "sgl/")
 
 ;; -------------------- syntax-color
-mz-extras :+= (package: "syntax-color")
+mz-extras :+= (package: "syntax-color") (doc: "red-black")
 
 ;; -------------------- plt-help
-dr-extras :+= (collects: "help") (bin: "Racket Documentation")
+dr-extras :+= (collects: "help") (doc: "help")
+              (bin: "Racket Documentation")
               (bin: "plt-help") (man: "plt-help")
 
 ;; -------------------- lang
@@ -584,7 +594,7 @@ plt-extras :+=
   (package: "test-engine/")
 
 ;; -------------------- math
-dr-extras :+= (package: "math")
+dr-extras :+= (package: "math") (get-libs: math)
 
 ;; -------------------- stepper
 plt-extras :+= (package: "stepper")
@@ -634,9 +644,13 @@ plt-extras :+= (- (+ (package: "games/" #:executable "plt-games")
                      (doc+src: "gl-board-game/" "cards/"))
                   "paint-by-numbers/{hattori|solution-sets|raw-problems}")
 
-;; -------------------- texpict & slideshow
-plt-extras :+= (collects: "texpict/")
-               (package: "slideshow")
+;; -------------------- slideshow
+plt-extras :+= (- (+ (package: "slideshow")
+                     (srcfile: "texpict/slideshow-run.rkt")
+                     (srcfile: "texpict/slideshow.rkt")
+                     (srcfile: "texpict/symbol.rkt"))
+                  (srcfile: "slideshow/pict.rkt")
+                  (srcfile: "slideshow/pict-convert.rkt"))
 
 ;; -------------------- frtime
 plt-extras :+= (package: "frtime/")
@@ -646,8 +660,7 @@ dr-extras :+= (package: "typed-racket/" ; used in drracket
                         #:docs "ts-{reference|guide}/")
               (- (collects: "typed/")
                  (cond (not plt) => (collects: "typed/test-engine/")
-                                    (collects: "typed/rackunit/")
-                                    (srcfile: "typed/rackunit.rkt")))
+                                    (srcfile: "typed/rackunit/gui.rkt")))
               (collects: "typed-scheme") ; compatibility
 
 ;; -------------------- gui-debugger
@@ -707,7 +720,7 @@ plt-extras :+= (package: "racklog/")
 plt-extras :+= (package: "datalog/")
 
 ;; -------------------- db
-mz-extras :+= (package: "db/") (lib: "sqlite*")
+mz-extras :+= (package: "db/") (get-libs: db)
 
 ;; -------------------- future-visualizer
 plt-extras :+= (package: "future-visualizer/")
@@ -744,20 +757,27 @@ platform
          i386-freebsd      => "FreeBSD (i386)"
          sparc-solaris     => "Solaris"
          ppc-osx-mac       => "Mac OS X (PPC)"
-         i386-osx-mac      => "Mac OS X (Intel)"
-         i386-osx-mac      => "Mac OS X (x86_64)"
+         i386-osx-mac      => "Mac OS X (Intel 32-bit)"
+         x86_64-osx-mac    => "Mac OS X (Intel 64-bit)"
          ppc-darwin        => "Mac OS X using X11 (PPC)"
          i386-darwin       => "Mac OS X using X11 (Intel)"
-         i386-win32        => "Windows"
-         x86_64-win32      => "Windows x64"
+         i386-win32        => "Windows (32-bit)"
+         x86_64-win32      => "Windows (64-bit)"
          ;; generic platforms for source distributions
          unix => "Unix"
-         mac  => "Macintosh"
+         mac  => "Mac OS X"
          win  => "Windows")
 
 readme-header
-:= "This is the Racket v"(version)" "(cond src  => "source" else => "binary")
+:= "This is the Racket v"(version)(cond src  => " source" unix => " binary")
    " package for "platform".\n"
-   (cond src => "See the build instructions in src/README.\n")
+   (cond src => "\n"
+                "See the build instructions in \"src/README\".\n"
+         mac => "\n"
+                "Install by dragging the enclosing Racket folder to your Applications folder\n"
+                "--- or wherever you like. You can move the Racket folder at any time, but do not\n"
+                "move applications or other files within the folder. If you want to use the\n"
+                "Racket command-line programs, then (optionally) add the path of the \"bin\"\n"
+                "subdirectory to your PATH environment variable.\n")
 
 ;; ============================================================================

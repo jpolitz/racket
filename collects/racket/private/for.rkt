@@ -118,7 +118,8 @@
              (if (identifier? stx)
                  (proc1)
                  (datum->syntax stx
-                                #`(#,(proc1) . #,(cdr (syntax-e stx)))
+                                ;; Use cons, not #`(#,op #,@args), to avoid replacing implicit #%app binding
+                                (cons (proc1) (cdr (syntax-e stx)))
                                 stx
                                 stx)))
            proc1)
@@ -1725,7 +1726,8 @@
   (define-sequence-syntax *in-list
     (lambda () #'in-list)
     (lambda (stx)
-      (syntax-case stx ()
+      (syntax-case stx (list)
+        [[(id) (_ (list expr))] #'[(id) (:do-in ([(id) expr]) #t () #t () #t #f ())]]
         [[(id) (_ lst-expr)]
          (for-clause-syntax-protect
           #'[(id)
@@ -1751,7 +1753,8 @@
   (define-sequence-syntax *in-mlist
     (lambda () #'in-mlist)
     (lambda (stx)
-      (syntax-case stx ()
+      (syntax-case stx (mlist)
+        [[(id) (_ (mlist expr))] #'[(id) (:do-in ([(id) expr]) #t () #t () #t #f ())]]
         [[(id) (_ lst-expr)]
          (for-clause-syntax-protect
           #'[(id)

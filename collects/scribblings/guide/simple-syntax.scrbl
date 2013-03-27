@@ -414,7 +414,7 @@ function.
 @interaction[(1 2 3 4)]
 
 When you accidentally omit a function name or when you use
-parentheses around an expression, you'll most often get an ``expected
+extra parentheses around an expression, you'll most often get an ``expected
 a procedure'' error like this one.
 
 @;- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -574,7 +574,7 @@ of requiring a separate @racket[define] for each identifier.
 #,let-expr-stx
 ]
 
-Each binding clause is an @nonterm{id} and a
+Each binding clause is an @nonterm{id} and an
 @nonterm{expr} surrounded by square brackets, and the
 expressions after the clauses are the body of the @racket[let]. In
 each clause, the @nonterm{id} is bound to the result of the

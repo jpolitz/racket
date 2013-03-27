@@ -142,7 +142,7 @@
 	 (g_list_insert l i -1))))))
 
 ;; used for location->window
-(define all-frames (make-hasheq))
+(define all-frames (make-weak-hasheq))
 
 (define frame%
   (class (client-size-mixin window%)
@@ -381,12 +381,11 @@
 	       (if big-icon
 		   (list (bitmap->pixbuf big-icon))
 		   (cdr (car (force icon-pixbufs+glist))))])
-	(atomically
-	 (let ([l (for/fold ([l #f]) ([i (cons small-pixbuf
-					       big-pixbufs)])
-		    (g_list_insert l i -1))])
-	   (gtk_window_set_icon_list gtk l)
-	   (g_list_free l))))))
+          (atomically
+           (let ([l (for/fold ([l #f]) ([i (cons small-pixbuf big-pixbufs)])
+                      (g_list_insert l i -1))])
+             (gtk_window_set_icon_list gtk l)
+             (g_list_free l))))))
     
     (define child-has-focus? #f)
     (define reported-activate #f)
@@ -404,8 +403,14 @@
 				  (set! reported-activate on?)
 				  (on-activate on?)))))))
 
+    (define treat-focus-out-as-menu-click? #f)
+    (define/public (treat-focus-out-as-menu-click)
+      (set! treat-focus-out-as-menu-click? #t))
+
     (define focus-here? #f)
     (define/override (on-focus? on?)
+      (when (and (not on?) treat-focus-out-as-menu-click?)
+        (on-menu-click))
       (on-focus-child on?)
       (cond
        [on?
@@ -511,7 +516,9 @@
       (set! saved-title s)
       (gtk_window_set_title gtk (if is-modified?
                                     (string-append s "*")
-                                    s)))))
+                                    s)))
+    
+    (define/public (display-changed) (void))))
 
 ;; ----------------------------------------
 
@@ -572,3 +579,37 @@
            (maybe GDK_CONTROL_MASK 'control)
            (maybe GDK_MOD1_MASK 'alt)
            (maybe GDK_META_MASK 'meta))))
+
+(define (tell-all-frames-signal-changed n)
+  (define frames (for/list ([f (in-hash-keys all-frames)]) f))
+  (for ([f (in-hash-keys all-frames)])
+    (define e (send f get-eventspace))
+    (unless (eventspace-shutdown? e)
+      (parameterize ([current-eventspace e])
+        (queue-callback
+         (λ () 
+           (send f display-changed)))))))
+
+(define-signal-handler 
+  connect-monitor-changed-signal
+  "monitors-changed"
+  (_fun _GdkScreen -> _void)
+  (λ (screen) (tell-all-frames-signal-changed 1)))
+
+(define-signal-handler 
+  connect-screen-changed-signal
+  "screen-changed"
+  (_fun _GdkScreen -> _void)
+  (λ (screen) (tell-all-frames-signal-changed 2)))
+
+(define-signal-handler 
+  connect-composited-changed-signal
+  "composited-changed"
+  (_fun _GdkScreen -> _void)
+  (λ (screen) (tell-all-frames-signal-changed 3)))
+
+(define (screen-size-signal-connect connect-signal)
+  (void (connect-signal (cast (gdk_screen_get_default) _GdkScreen _GtkWidget))))
+(screen-size-signal-connect connect-monitor-changed-signal)
+(screen-size-signal-connect connect-screen-changed-signal)
+(screen-size-signal-connect connect-composited-changed-signal)

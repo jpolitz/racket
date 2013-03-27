@@ -9,8 +9,8 @@
          "number-theory.rkt"
          "vector.rkt"
          "array.rkt"
-         ;"matrix.rkt"
-         "parameters.rkt")
+         "matrix.rkt"
+         "utils.rkt")
 
 (provide (all-from-out
           "base.rkt"
@@ -22,5 +22,5 @@
           "number-theory.rkt"
           "vector.rkt"
           "array.rkt"
-          ;"matrix.rkt"
-          "parameters.rkt"))
+          "matrix.rkt"
+          "utils.rkt"))

@@ -8,7 +8,6 @@
          racket/match
          racket/path
          racket/class
-         racket/serialize
          racket/stxparam
          (for-syntax syntax/parse
                      racket/base))
@@ -82,22 +81,24 @@
         (set! in _in)
         (set! err _err)
         (send/msg dynamic-require-cmd)
-        (when initialmsg (send/msg (s-exp->fasl (serialize (initialmsg id)))))))
+        (when initialmsg (send/msg (initialmsg id)))))
     (define/public (send/msg msg) 
       (with-handlers ([exn:fail?
-        (lambda (x)
-            (eprintf "While sending message to parallel-do worker: ~a ~a\n" id (exn-message x))
-            (exit 1))])
-      (DEBUG_COMM (eprintf "CSENDING ~v ~v\n" id msg))
-      (write msg in) (flush-output in)))
+                       (lambda (x)
+                         (eprintf "While sending message to parallel-do worker: ~a ~a\n"
+                                  id (exn-message x))
+                         (exit 1))])
+        (DEBUG_COMM (eprintf "CSENDING ~v ~v\n" id msg))
+        (write msg in) (flush-output in)))
     (define/public (recv/msg)
       (with-handlers ([exn:fail?
-        (lambda (x)
-            (eprintf "While receiving message from parallel-do worker ~a ~a\n" id (exn-message x))
-            (exit 1))])
-      (define r (read out))
-      (DEBUG_COMM (eprintf "CRECEIVNG ~v ~v\n" id r))
-      r))
+                       (lambda (x)
+                         (eprintf "While receiving message from parallel-do worker ~a ~a\n"
+                                  id (exn-message x))
+                         (exit 1))])
+        (define r (read out))
+        (DEBUG_COMM (eprintf "CRECEIVNG ~v ~v\n" id r))
+        r))
     (define/public (read-all) (port->string out))
     (define/public (get-id) id)
     (define/public (get-out) out)
@@ -121,7 +122,7 @@
     (define/public (spawn _id module-path funcname [initialmsg #f])
       (set! id _id)
       (set! pl (dynamic-place (string->path module-path) funcname))
-      (when initialmsg (send/msg (s-exp->fasl (serialize (initialmsg id))))))
+      (when initialmsg (send/msg (initialmsg id))))
     (define/public (send/msg msg)
       (DEBUG_COMM (eprintf "CSENDING ~v ~v\n" pl msg))
       (place-channel-put pl msg))
@@ -409,7 +410,7 @@
       (DEBUG_COMM (fprintf orig-err "WRECVEIVED ~v\n" r))
       r))
   
-  (setup-proc (deserialize (fasl->s-exp (pdo-recv)))
+  (setup-proc (pdo-recv)
               (lambda (set-proc)
                 (let/ec die-k
                   (define (recv/reqp) (pdo-recv))

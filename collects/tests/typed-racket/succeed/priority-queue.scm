@@ -12,10 +12,12 @@
 (require (prefix-in heap: "leftist-heap.ss")
 	 (except-in (lib "67.ss" "srfi") number-compare current-compare =? <?)
 	 (only-in "leftist-heap.ss" comparator))
-(require/typed number-compare (number number -> number) (lib "67.ss" "srfi"))
-(require/typed current-compare (-> (top top -> number)) (lib "67.ss" "srfi"))
-(require/typed =? ((top top -> number) top top -> boolean) (lib "67.ss" "srfi"))
-(require/typed <? ((top top -> number) top top -> boolean) (lib "67.ss" "srfi"))
+(require/typed
+  srfi/67
+  [number-compare (number number -> number)]
+  [current-compare (-> (top top -> number))]
+  [=? ((top top -> number) top top -> boolean)]
+  [<? ((top top -> number) top top -> boolean)])
 
 ; a priority-queue is a heap of  (cons <priority> <element>)
 
@@ -54,9 +56,9 @@
 
 (define: empty : (All (a) (case-lambda (-> (priority-queue a)) (comparator -> (priority-queue a))))
   (pcase-lambda: (a)
-		 [()    (#{empty @ a} (current-compare))]
-		 [([cmp : comparator]) (make (#{heap:empty :: (case-lambda (-> (pqh a))
-									   (comparator -> (pqh a)))} cmp))]))
+    [() (#{empty @ a} (current-compare))]
+    [([cmp : comparator]) (make (#{heap:empty :: (case-lambda (-> (pqh a))
+                                                              (comparator -> (pqh a)))} cmp))]))
 
 (pdefine: (e r) (fold [f : ((cons number e) r -> r)] [b : r] [a : (priority-queue e)]) : r
 	  (heap:fold f b (#{heap :: ((priority-queue e) -> (pqh e))} a)))

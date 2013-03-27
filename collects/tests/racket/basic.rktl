@@ -1314,15 +1314,16 @@
 ;; unmatched output to a port:
 (for ([succeed? '(#f #t)])
   (for ([N '(1 100 1000 1023 1024 10000)])
-    (define o (open-output-bytes))
-    (void (regexp-match-positions #rx"y" 
-                                  (string-append
-                                   (make-string N #\x) 
-                                   (if succeed? "y" ""))
-                                  0 
-                                  (+ N (if succeed? 1 0))
-                                  o))
-    (test N bytes-length (get-output-bytes o))))
+    (for ([M (list 0 (quotient N 2))])
+      (define o (open-output-bytes))
+      (void (regexp-match-positions #rx"y" 
+                                    (string-append
+                                     (make-string N #\x) 
+                                     (if succeed? "y" ""))
+                                    M
+                                    (+ N (if succeed? 1 0))
+                                    o))
+    (test (- N M) bytes-length (get-output-bytes o)))))
 
 (arity-test regexp 1 1)
 (arity-test regexp? 1 1)
@@ -2561,6 +2562,16 @@
   (equal-hash-code ht)
   (equal-secondary-hash-code ht))
 
+;; Check that an equal hash code on an
+;;  mutable, opaque structure does not
+;;  see mutation.
+(let ()
+  (struct a (x [y #:mutable]))
+  (define an-a (a 1 2))
+  (define v (equal-hash-code an-a))
+  (set-a-y! an-a 8)
+  (test v equal-hash-code an-a))
+
 ;; ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Misc
 
@@ -2571,6 +2582,9 @@
 (test #t string? (system-type 'machine))
 (test #t symbol? (system-type 'link))
 (test #t relative-path? (system-library-subpath))
+
+(test #t pair? (memv (system-type 'word) '(32 64)))
+(test (fixnum? (expt 2 32)) = (system-type 'word) 64)
 
 (test #t 'cmdline (let ([v (current-command-line-arguments)])
 		    (and (vector? v)

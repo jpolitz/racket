@@ -15,6 +15,9 @@ run bad-draw.rkt
 run error-in-tick.rkt
 run error-in-draw.rkt
 run -t batch-io.rkt
+run -t batch-io2.rkt
+run -t batch-io3.rkt
+run -t batch-io-csv-ho.rkt
 run clause-once.rkt
 run full-scene-visible.rkt
 run image-too-large.rkt
@@ -38,6 +41,7 @@ run on-tick-with-limit.rkt
 run on-release-no-key.rkt
 run struct-universe.rkt
 run universe-receive.rkt
+run universe-restart.rkt
 run name.rkt
 run pad1.rkt
 run pad1-handler.rkt

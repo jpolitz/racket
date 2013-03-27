@@ -23,3 +23,5 @@ This manual documents data structure libraries available in the
 @include-section["interval-map.scrbl"]
 @include-section["heap.scrbl"]
 @include-section["integer-set.scrbl"]
+@include-section["bit-vector.scrbl"]
+@include-section["union-find.scrbl"]

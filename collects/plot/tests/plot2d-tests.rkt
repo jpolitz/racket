@@ -4,6 +4,8 @@
 
 ;(plot-new-window? #t)
 
+(plot (function / -249 250))
+
 (time
  (define xs (build-list 10000 (λ _ (random))))
  (plot (density xs 1/2)))
@@ -305,6 +307,10 @@
                   (contours f2 -5 0 #:colors '("blue") #:label "Blueness"
                             #:widths '(2) #:styles '(dot)))
             #:x-min -5 #:x-max 5 #:y-min -5 #:y-max 5))
+
+;; Both plots should be blank
+(plot (contours f2 -5 0) #:x-min 1 #:x-max 3 #:y-min 1 #:y-max 3)
+(plot (contour-intervals f2 -5 0) #:x-min 1 #:x-max 3 #:y-min 1 #:y-max 3)
 
 (time (plot (contour-intervals f1 -5 5 -5 5 #:label "z")))
 

@@ -33,7 +33,7 @@
 ;; ===================================================================================================
 ;; Sequence of indexes
 
-(: in-array-indexes (User-Indexes -> (Sequenceof Indexes)))
+(: in-array-indexes (In-Indexes -> (Sequenceof Indexes)))
 (define (in-array-indexes ds)
   (let: ([ds : Indexes  (check-array-shape
                          ds (λ () (raise-argument-error 'in-array-indexes "Indexes" ds)))])
@@ -100,10 +100,11 @@
          (let ([arrs  (list->vector (map (λ: ([arr : (Array A)]) (array-broadcast arr ds)) arrs))])
            (define dk (vector-length arrs))
            (define new-ds (unsafe-vector-insert ds k dk))
-           (unsafe-build-array
-            new-ds (λ: ([js : Indexes])
-                     (define jk (unsafe-vector-ref js k))
-                     (let ([old-js  (unsafe-vector-remove js k)])
-                       ((unsafe-array-proc (unsafe-vector-ref arrs jk)) old-js)))))]
+           (array-default-strict
+            (unsafe-build-array
+             new-ds (λ: ([js : Indexes])
+                      (define jk (unsafe-vector-ref js k))
+                      (let ([old-js  (unsafe-vector-remove js k)])
+                        ((unsafe-array-proc (unsafe-vector-ref arrs jk)) old-js))))))]
         [else
          (error 'array-list->array (format "expected axis Index <= ~e; given ~e" dims k))]))

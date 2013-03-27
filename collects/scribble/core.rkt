@@ -6,7 +6,7 @@
 
 ;; ----------------------------------------
 
-(define-struct collect-info (fp ht ext-ht parts tags gen-prefix relatives parents) #:transparent)
+(define-struct collect-info (fp ht ext-ht ext-demand parts tags gen-prefix relatives parents) #:transparent)
 (define-struct resolve-info (ci delays undef searches) #:transparent)
 
 (define (part-collected-info part ri)
@@ -19,7 +19,7 @@
       (when old-val
         (eprintf "WARNING: collected information for key multiple times: ~e; values: ~e ~e\n"
                  key old-val val))
-    (hash-set! ht key val))))
+      (hash-set! ht key val))))
 
 (define (resolve-get/where part ri key)
   (let ([key (tag-key key ri)])
@@ -34,8 +34,14 @@
                (collected-info-parent (part-collected-info part ri))
                ri key)]
         [else
-         (values (hash-ref (collect-info-ext-ht (resolve-info-ci ri)) key #f)
-                 #t)]))))
+         (define ci (resolve-info-ci ri))
+         (define (try-ext)
+           (hash-ref (collect-info-ext-ht ci) key #f))
+         (values
+          (or (try-ext)
+              (and ((collect-info-ext-demand ci) key ci)
+                   (try-ext)))
+          #t)]))))
 
 (define (resolve-get/ext? part ri key)
   (resolve-get/ext?* part ri key #f))
@@ -87,7 +93,8 @@
        (or (string? (cadr s))
            (generated-tag? (cadr s))
            (and (pair? (cadr s))
-                (list? (cadr s))))
+                (list? (cadr s))
+                (serializable? (cadr s))))
        (null? (cddr s))))
 
 (provide block?)
@@ -200,7 +207,7 @@
             [center-name string?]
             [bottom-name string?])]
 
- [collected-info ([number (listof (or/c false/c integer?))]
+ [collected-info ([number (listof (or/c false/c exact-nonnegative-integer? string?))]
                   [parent (or/c false/c part?)]
                   [info any/c])])
 
@@ -612,14 +619,24 @@
 (define (aux-element? e)
   (and (element? e)
        (let ([s (element-style e)])
-         (and (style? e)
+         (and (style? s)
               (memq 'aux (style-properties s))))))
 
 (define (strip-aux content)
   (cond
     [(null? content) null]
     [(aux-element? content) null]
-    [(list? content) (map strip-aux content)]
+    [(element? content)
+     (define c (element-content content))
+     (define p (strip-aux c))
+     (if (equal? c p)
+         content
+         (struct-copy element content [content p]))]
+    [(list? content) 
+     (define p (map strip-aux content))
+     (if (equal? p content)
+         content
+         p)]
     [else content]))
 
 ;; ----------------------------------------

@@ -5,13 +5,15 @@
 
 (require string-constants
          racket/class
+         racket/string
          mred/mred-sig
          syntax-color/module-lexer
          "collapsed-snipclass-helpers.rkt"
          "sig.rkt"
          "../gui-utils.rkt"
          "../preferences.rkt"
-         racket/match)
+         racket/match
+         unstable/options)
 
 (import mred^
         [prefix preferences: framework:preferences^]
@@ -151,7 +153,7 @@
 ;; old snips (from old versions of drracket) use this snipclass
 (define 2lib-snip-class (make-object sexp-snipclass%))
 (send 2lib-snip-class set-classname (format "~s" '((lib "collapsed-snipclass.ss" "framework")
-                                                  (lib "collapsed-snipclass-wxme.ss" "framework"))))
+                                                   (lib "collapsed-snipclass-wxme.ss" "framework"))))
 (send 2lib-snip-class set-version 0)
 (send (get-the-snip-class-list) add 2lib-snip-class)
 
@@ -296,6 +298,7 @@
       (comment ,(make-object color% 194 116 31) ,(string-constant scheme-mode-color-comment))
       (string ,constant-green ,(string-constant scheme-mode-color-string))
       (constant ,constant-green ,(string-constant scheme-mode-color-constant))
+      (hash-colon-keyword ,(make-object color% "brown") ,(string-constant scheme-mode-color-hash-colon-keyword))
       (parenthesis ,(make-object color% "brown") ,(string-constant scheme-mode-color-parenthesis))
       (error ,(make-object color% "red") ,(string-constant scheme-mode-color-error))
       (other ,(make-object color% "black") ,(string-constant scheme-mode-color-other)))))
@@ -308,6 +311,7 @@
             (comment ,(make-object color% 249 148 40))
             (string ,(make-object color% 51 174 51))
             (constant ,(make-object color% 60 194 57))
+            (hash-colon-keyword ,(make-object color% 151 69 43))
             (parenthesis ,(make-object color% 151 69 43))
             (other ,(make-object color% "white")))])
     (map 
@@ -501,203 +505,207 @@
     
     (define/public (get-limit pos) 0)
     
-    (define/public (balance-parens key-event)
+    (define/public (balance-parens key-event [smart-skip #f])
       (insert-close-paren (get-start-position) 
                           (send key-event get-key-code)
                           (preferences:get 'framework:paren-match)
-                          (preferences:get 'framework:fixup-parens)))
+                          (preferences:get 'framework:fixup-parens)
+                          (or smart-skip
+                              (and (preferences:get 'framework:automatic-parens)
+                                   (not (in-string/comment? this))
+                                   'adjacent))))
     
     (define/public (tabify-on-return?) #t)
     (define/public (tabify [pos (get-start-position)])
       (unless (is-stopped?)
-      (let* ([tabify-prefs (preferences:get 'framework:tabify)]
-             [last-pos (last-position)]
-             [para (position-paragraph pos)]
-             [is-tabbable? (and (> para 0)
-                                (not (memq (classify-position (sub1 (paragraph-start-position para)))
-                                           '(comment string error))))]
-             [end (if is-tabbable? (paragraph-start-position para) 0)]
-             [limit (get-limit pos)]
-             ;; "contains" is the start of the initial sub-S-exp
-             ;;  in the S-exp that contains "pos". If pos is outside
-             ;;  all S-exps, this will be the start of the initial
-             ;;  S-exp
-             [contains 
-              (if is-tabbable?
-                  (backward-containing-sexp end limit)
-                  #f)]
-             [contain-para (and contains
-                                (position-paragraph contains))]
-             ;; "last" is the start of the S-exp just before "pos"
-             [last 
-              (if contains
-                  (let ([p (get-backward-sexp end)])
-                    (if (and p (p . >= . limit))
-                        p
-                        (backward-match end limit)))
-                  #f)]
-             [last-para (and last
-                             (position-paragraph last))])
-        (letrec
-            ([find-offset
-              (λ (start-pos)
-                (define tab-char? #f)
-                (define end-pos
-                  (let loop ([p start-pos])
-                    (let ([c (get-character p)])
-                      (cond
-                        [(char=? c #\tab)
-                         (set! tab-char? #t)
-                         (loop (add1 p))]
-                        [(char=? c #\newline)
-                         p]
-                        [(char-whitespace? c)
-                         (loop (add1 p))]
-                        [else
-                         p]))))
-                (define start-x (box 0))
-                (define end-x (box 0))
-                (position-location start-pos start-x #f #t #t)
-                (position-location end-pos end-x #f #t #t)
-                (define-values (w _1 _2 _3)
-                  (send (get-dc) get-text-extent "x" 
-                        (send (send (get-style-list)
-                                    find-named-style "Standard")
-                              get-font)))
-                (values (inexact->exact (floor (/ (- (unbox end-x) (unbox start-x)) w)))
-                        end-pos
-                        tab-char?))]
-             
-             [visual-offset
-              (λ (pos)
-                (let loop ([p (sub1 pos)])
-                  (if (= p -1)
-                      0
+        (let* ([tabify-prefs (preferences:get 'framework:tabify)]
+               [last-pos (last-position)]
+               [para (position-paragraph pos)]
+               [is-tabbable? (and (> para 0)
+                                  (not (memq (classify-position (sub1 (paragraph-start-position para)))
+                                             '(comment string error))))]
+               [end (if is-tabbable? (paragraph-start-position para) 0)]
+               [limit (get-limit pos)]
+               ;; "contains" is the start of the initial sub-S-exp
+               ;;  in the S-exp that contains "pos". If pos is outside
+               ;;  all S-exps, this will be the start of the initial
+               ;;  S-exp
+               [contains 
+                (if is-tabbable?
+                    (backward-containing-sexp end limit)
+                    #f)]
+               [contain-para (and contains
+                                  (position-paragraph contains))]
+               ;; "last" is the start of the S-exp just before "pos"
+               [last 
+                (if contains
+                    (let ([p (get-backward-sexp end)])
+                      (if (and p (p . >= . limit))
+                          p
+                          (backward-match end limit)))
+                    #f)]
+               [last-para (and last
+                               (position-paragraph last))])
+          (letrec
+              ([find-offset
+                (λ (start-pos)
+                  (define tab-char? #f)
+                  (define end-pos
+                    (let loop ([p start-pos])
                       (let ([c (get-character p)])
                         (cond
-                          [(char=? c #\null) 0]
                           [(char=? c #\tab)
-                           (let ([o (loop (sub1 p))])
-                             (+ o (- 8 (modulo o 8))))]
-                          [(char=? c #\newline) 0]
-                          [else (add1 (loop (sub1 p)))])))))]
-             [do-indent
-              (λ (amt)
-                (define pos-start end)
-                (define-values (gwidth curr-offset tab-char?) (find-offset pos-start))
-                (unless (and (not tab-char?) (= amt (- curr-offset pos-start)))
-                  (delete pos-start curr-offset)
-                  (insert (make-string amt #\space) pos-start)))]
-             [get-proc
-              (λ ()
-                (let ([id-end (get-forward-sexp contains)])
-                  (and (and id-end (> id-end contains))
-                       (let* ([text (get-text contains id-end)])
-                         (or (get-keyword-type text tabify-prefs)
-                             'other)))))]
-             [procedure-indent 
-              (λ ()
-                (case (get-proc)
-                  [(begin define) 1]
-                  [(lambda) 3]
-                  [else 0]))]
-             [special-check
-              (λ ()
-                (let* ([proc-name (get-proc)])
-                  (or (eq? proc-name 'define)
-                      (eq? proc-name 'lambda))))]
-             [curley-brace-sexp?
-              (λ ()
-                (define up-p (find-up-sexp pos))
-                (and up-p
-                     (equal? #\{ (get-character up-p))))]
-             
-             [indent-first-arg (λ (start)
-                                 (define-values (gwidth curr-offset tab-char?) (find-offset start))
-                                 gwidth)])
-          (when (and is-tabbable?
-                     (not (char=? (get-character (sub1 end))
-                                  #\newline)))
-            (insert #\newline (paragraph-start-position para)))
-          (cond
-            [(not is-tabbable?) 
-             (when (= para 0)
-               (do-indent 0))]
-            [(let-values ([(gwidth real-start tab-char?) (find-offset end)]) 
-               (and (<= (+ 3 real-start) (last-position))
-                    (string=? ";;;"
-                              (get-text real-start
-                                        (+ 2 real-start)))))
-             (void)]
-            [(not contains)
-             ;; Something went wrong matching. Should we get here?
-             (do-indent 0)]
-            #;  ;; disable this to accommodate PLAI programs; return to this when a #lang capability is set up.
-            [(curley-brace-sexp?)
-             ;; when we are directly inside an sexp that uses {}s,
-             ;; we indent in a more C-like fashion (to help Scribble)
-             (define first-curley (find-up-sexp pos))
-             (define containing-curleys
-               (let loop ([pos first-curley])
-                 (let ([next (find-up-sexp pos)])
-                   (if (and next
-                            (equal? (get-character next) #\{))
-                       (+ (loop next) 1)
-                       1))))
-             (define close-first-curley (get-forward-sexp first-curley))
-             (define para (position-paragraph pos))
-             (when (and close-first-curley
-                        (<= (paragraph-start-position para) close-first-curley (paragraph-end-position para)))
-               (set! containing-curleys (max 0 (- containing-curleys 1))))
-             (do-indent (* containing-curleys 2))]
-            [(not last) 
-             ;; We can't find a match backward from pos,
-             ;;  but we seem to be inside an S-exp, so 
-             ;;  go "up" an S-exp, and move forward past
-             ;;  the associated paren
-             (let ([enclosing (find-up-sexp pos)])
-               (if enclosing
-                   (do-indent (+ (visual-offset enclosing) 1))
-                   (do-indent 0)))]
-            [(= contains last)
-             ;; There's only one S-expr in the S-expr
-             ;;  containing "pos"
-             (do-indent (+ (visual-offset contains)
-                           (procedure-indent)))]
-            [(special-check)
-             ;; In case of "define", etc., ignore the position of last 
-             ;;  and just indent under the "define"
-             (do-indent (add1 (visual-offset contains)))]
-            [(= contain-para last-para)
-             ;; So far, the S-exp containing "pos" was all on
-             ;;  one line (possibly not counting the opening paren),
-             ;;  so indent to follow the first S-exp's end
-             ;;  unless there are just two sexps and the second is an ellipsis.
-             ;;  in that case, we just ignore the ellipsis
-             (let ([name-length (let ([id-end (get-forward-sexp contains)])
-                                  (if id-end
-                                      (- id-end contains)
-                                      0))])
-               (cond
-                 [(second-sexp-is-ellipsis? contains)
-                  (do-indent (visual-offset contains))]
-                 [(not (find-up-sexp pos))
-                  (do-indent (visual-offset contains))]
-                 [else
-                  (do-indent (+ (visual-offset contains)
-                                name-length
-                                (indent-first-arg (+ contains 
-                                                     name-length))))]))]
-            [else
-             ;; No particular special case, so indent to match first 
-             ;; S-expr that start on the previous line
-             (let loop ([last last][last-para last-para])
-               (let* ([next-to-last (backward-match last limit)]
-                      [next-to-last-para (and next-to-last
-                                              (position-paragraph next-to-last))])
-                 (if (equal? last-para next-to-last-para)
-                     (loop next-to-last next-to-last-para)
-                     (do-indent (visual-offset last)))))])))))
+                           (set! tab-char? #t)
+                           (loop (add1 p))]
+                          [(char=? c #\newline)
+                           p]
+                          [(char-whitespace? c)
+                           (loop (add1 p))]
+                          [else
+                           p]))))
+                  (define start-x (box 0))
+                  (define end-x (box 0))
+                  (position-location start-pos start-x #f #t #t)
+                  (position-location end-pos end-x #f #t #t)
+                  (define-values (w _1 _2 _3)
+                    (send (get-dc) get-text-extent "x" 
+                          (send (send (get-style-list)
+                                      find-named-style "Standard")
+                                get-font)))
+                  (values (inexact->exact (floor (/ (- (unbox end-x) (unbox start-x)) w)))
+                          end-pos
+                          tab-char?))]
+               
+               [visual-offset
+                (λ (pos)
+                  (let loop ([p (sub1 pos)])
+                    (if (= p -1)
+                        0
+                        (let ([c (get-character p)])
+                          (cond
+                            [(char=? c #\null) 0]
+                            [(char=? c #\tab)
+                             (let ([o (loop (sub1 p))])
+                               (+ o (- 8 (modulo o 8))))]
+                            [(char=? c #\newline) 0]
+                            [else (add1 (loop (sub1 p)))])))))]
+               [do-indent
+                (λ (amt)
+                  (define pos-start end)
+                  (define-values (gwidth curr-offset tab-char?) (find-offset pos-start))
+                  (unless (and (not tab-char?) (= amt (- curr-offset pos-start)))
+                    (delete pos-start curr-offset)
+                    (insert (make-string amt #\space) pos-start)))]
+               [get-proc
+                (λ ()
+                  (let ([id-end (get-forward-sexp contains)])
+                    (and (and id-end (> id-end contains))
+                         (let* ([text (get-text contains id-end)])
+                           (or (get-keyword-type text tabify-prefs)
+                               'other)))))]
+               [procedure-indent 
+                (λ ()
+                  (case (get-proc)
+                    [(begin define) 1]
+                    [(lambda) 3]
+                    [else 0]))]
+               [special-check
+                (λ ()
+                  (let* ([proc-name (get-proc)])
+                    (or (eq? proc-name 'define)
+                        (eq? proc-name 'lambda))))]
+               [curley-brace-sexp?
+                (λ ()
+                  (define up-p (find-up-sexp pos))
+                  (and up-p
+                       (equal? #\{ (get-character up-p))))]
+               
+               [indent-first-arg (λ (start)
+                                   (define-values (gwidth curr-offset tab-char?) (find-offset start))
+                                   gwidth)])
+            (when (and is-tabbable?
+                       (not (char=? (get-character (sub1 end))
+                                    #\newline)))
+              (insert #\newline (paragraph-start-position para)))
+            (cond
+              [(not is-tabbable?) 
+               (when (= para 0)
+                 (do-indent 0))]
+              [(let-values ([(gwidth real-start tab-char?) (find-offset end)]) 
+                 (and (<= (+ 3 real-start) (last-position))
+                      (string=? ";;;"
+                                (get-text real-start
+                                          (+ 2 real-start)))))
+               (void)]
+              [(not contains)
+               ;; Something went wrong matching. Should we get here?
+               (do-indent 0)]
+              #;  ;; disable this to accommodate PLAI programs; return to this when a #lang capability is set up.
+              [(curley-brace-sexp?)
+               ;; when we are directly inside an sexp that uses {}s,
+               ;; we indent in a more C-like fashion (to help Scribble)
+               (define first-curley (find-up-sexp pos))
+               (define containing-curleys
+                 (let loop ([pos first-curley])
+                   (let ([next (find-up-sexp pos)])
+                     (if (and next
+                              (equal? (get-character next) #\{))
+                         (+ (loop next) 1)
+                         1))))
+               (define close-first-curley (get-forward-sexp first-curley))
+               (define para (position-paragraph pos))
+               (when (and close-first-curley
+                          (<= (paragraph-start-position para) close-first-curley (paragraph-end-position para)))
+                 (set! containing-curleys (max 0 (- containing-curleys 1))))
+               (do-indent (* containing-curleys 2))]
+              [(not last) 
+               ;; We can't find a match backward from pos,
+               ;;  but we seem to be inside an S-exp, so 
+               ;;  go "up" an S-exp, and move forward past
+               ;;  the associated paren
+               (let ([enclosing (find-up-sexp pos)])
+                 (if enclosing
+                     (do-indent (+ (visual-offset enclosing) 1))
+                     (do-indent 0)))]
+              [(= contains last)
+               ;; There's only one S-expr in the S-expr
+               ;;  containing "pos"
+               (do-indent (+ (visual-offset contains)
+                             (procedure-indent)))]
+              [(special-check)
+               ;; In case of "define", etc., ignore the position of last 
+               ;;  and just indent under the "define"
+               (do-indent (add1 (visual-offset contains)))]
+              [(= contain-para last-para)
+               ;; So far, the S-exp containing "pos" was all on
+               ;;  one line (possibly not counting the opening paren),
+               ;;  so indent to follow the first S-exp's end
+               ;;  unless there are just two sexps and the second is an ellipsis.
+               ;;  in that case, we just ignore the ellipsis
+               (let ([name-length (let ([id-end (get-forward-sexp contains)])
+                                    (if id-end
+                                        (- id-end contains)
+                                        0))])
+                 (cond
+                   [(second-sexp-is-ellipsis? contains)
+                    (do-indent (visual-offset contains))]
+                   [(not (find-up-sexp pos))
+                    (do-indent (visual-offset contains))]
+                   [else
+                    (do-indent (+ (visual-offset contains)
+                                  name-length
+                                  (indent-first-arg (+ contains 
+                                                       name-length))))]))]
+              [else
+               ;; No particular special case, so indent to match first 
+               ;; S-expr that start on the previous line
+               (let loop ([last last][last-para last-para])
+                 (let* ([next-to-last (backward-match last limit)]
+                        [next-to-last-para (and next-to-last
+                                                (position-paragraph next-to-last))])
+                   (if (equal? last-para next-to-last-para)
+                       (loop next-to-last next-to-last-para)
+                       (do-indent (visual-offset last)))))])))))
     
     ;; returns #t if `contains' is at a position on a line with an sexp, an ellipsis and nothing else.
     ;; otherwise, returns #f
@@ -897,17 +905,39 @@
         (let ([snip-pos (get-snip-position snip)])
           (delete snip-pos (+ snip-pos 1)))
         (set-position pos pos)))
-    
+
+
+    ;; stick-to-next-sexp?: natural -> boolean
+    (define stick-to-patterns
+      '("'" "," ",@" "`" "#'" "#," "#`" "#,@"
+        "#&" "#;" "#hash" "#hasheq" "#ci" "#cs"))
+    (define stick-to-patterns-union
+      (regexp (string-append 
+               "^("
+               (string-join (map regexp-quote stick-to-patterns) "|")
+               ")")))
+    (define stick-to-patterns-union-anchored
+      (regexp (string-append 
+               "^("
+               (string-join (map regexp-quote stick-to-patterns) "|")
+               ")$")))
+    (define stick-to-max-pattern-length 
+      (apply max (map string-length stick-to-patterns)))
     (define/public (stick-to-next-sexp? start-pos)
-      (let ([end-pos (forward-match start-pos (last-position))])
-        (and end-pos
-             (member (get-text start-pos end-pos)
-                     '("'" "," ",@" "`"
-                           "#'" "#," "#`" "#,@"
-                           "#&" "#;"
-                           "#hash" "#hasheq"
-                           "#ci" "#cs")))))
-    
+      ;; Optimization: speculatively check whether the string will
+      ;; match the patterns; at time of writing, forward-match can be
+      ;; really expensive.
+      (define snippet 
+        (get-text start-pos 
+                  (min (last-position) 
+                       (+ start-pos stick-to-max-pattern-length))))
+      (and (regexp-match stick-to-patterns-union snippet)
+           (let ([end-pos (forward-match start-pos (last-position))])
+             (and end-pos
+                  (regexp-match stick-to-patterns-union-anchored
+                                (get-text start-pos end-pos))
+                  #t))))
+      
     (define/public (get-forward-sexp start-pos) 
       ;; loop to work properly with quote, etc.
       (let loop ([one-forward (forward-match start-pos (last-position))])
@@ -1033,8 +1063,9 @@
       (λ (start-pos)
         (let* ([pos (skip-whitespace start-pos 'forward #f)]
                [first-char (get-character pos)]
-               [paren? (or (char=? first-char #\( )
-                           (char=? first-char #\[ ))]
+               [paren? (or (char=? first-char #\()
+                           (char=? first-char #\[)
+                           (char=? first-char #\{))]
                [closer (and paren? 
                             (get-forward-sexp pos))])
           (if (and paren? closer)
@@ -1240,6 +1271,8 @@
   (interface ()
     ))
 
+(define module-lexer/waived (waive-option module-lexer))
+
 (define text-mode-mixin
   (mixin (color:text-mode<%> mode:surrogate-text<%>) (-text-mode<%>)
     
@@ -1271,7 +1304,7 @@
      'framework:tabify
      (lambda (k v) (set! tabify-pref v)))
     (define/private (racket-lexer-wrapper in offset mode)
-      (let-values (((lexeme type paren start end backup-delta mode) (module-lexer in offset mode)))
+      (let-values (((lexeme type paren start end backup-delta mode) (module-lexer/waived in offset mode)))
         (cond
           ((and (eq? type 'symbol)
                 (get-keyword-type lexeme tabify-pref))
@@ -1310,6 +1343,47 @@
          [(and def-reg (regexp-match def-reg text)) 'define]
          [(and lam-reg (regexp-match lam-reg text)) 'lambda]
          [else #f])))))
+
+
+(define (position-type-when-inserted text char)
+  (define selection-start (send text get-start-position))
+  (define selection-end (send text get-end-position))
+  (send text begin-edit-sequence #t #f)
+  (send text insert char selection-start)
+  (define actual-type (send text classify-position selection-start))
+  (send text delete selection-start (+ 1 selection-start))
+  (send text end-edit-sequence)
+  (send text undo)  ; to avoid messing up the editor's modified state
+  ;(printf "check: |~a| actual: ~a~n" char actual-type)
+  actual-type)
+
+
+  ;; determines if the cursor is currently sitting in a string
+  ;; literal or a comment. To do this more accurately, first
+  ;; insert a space at the current cursor start position, then
+  ;; check what classification of that space character itself
+  (define (in-string/comment? text)
+    (define selection-start (send text get-start-position))
+    (define selection-end (send text get-end-position))
+    (send text begin-edit-sequence #t #f)
+    (send text insert " " selection-start)
+    (define type (send text classify-position selection-start))
+    (send text delete selection-start (add1 selection-start))
+    (send text end-edit-sequence)
+    (send text undo)  ; to avoid messing up the editor's modified state
+                      ; in case of a simple skip
+    (and (member type '(comment string)) #t))
+
+  ;; produces the 1 character string immediately following
+  ;; the cursor, if there is one and if there is not a current
+  ;; selection, in which case produces #f
+  (define (immediately-following-cursor text)
+    (define selection-start (send text get-start-position))
+    (and (= selection-start (send text get-end-position))   ; nothing selected
+         (< selection-start (send text last-position))
+         (send text get-text selection-start (+ selection-start 1))))
+
+
 
 (define set-mode-mixin
   (mixin (-text<%> mode:host-text<%>) ()
@@ -1424,6 +1498,9 @@
   (send keymap add-function "balance-parens"
         (λ (edit event)
           (send edit balance-parens event)))
+  (send keymap add-function "balance-parens-forward"
+        (λ (edit event)
+          (send edit balance-parens event 'forward)))
   
   (send keymap map-function "TAB" "tabify-at-caret")
   
@@ -1443,17 +1520,62 @@
   
   (send keymap map-function "leftbuttondouble" "paren-double-select")
   
+
+
   (define (insert-brace-pair text open-brace close-brace)
     (define selection-start (send text get-start-position))
+    (define hash-before?  ; tweak to detect and correctly close block comments #| ... |#
+      (and (< 0 selection-start)
+           (string=? "#" (send text get-text (- selection-start 1) selection-start))))
+    (send text begin-edit-sequence)
     (send text set-position (send text get-end-position))
     (send text insert close-brace)
+    (when (and (char=? #\| open-brace) hash-before?) (send text insert #\#))
     (send text set-position selection-start)
-    (send text insert open-brace))
+    (send text insert open-brace)
+    (send text end-edit-sequence))
   
+  ;; only insert a pair if:
+  ;;   - automatic-parens is on, and
+  ;;   - cursor is not in a string or line/block comment, and
+  ;;   - cursor is not preceded by #\ or \ escape characters
   (define (maybe-insert-brace-pair text open-brace close-brace)
+    (define open-parens 
+      (for/list ([x (racket-paren:get-paren-pairs)]) (string-ref (car x) 0)))
     (cond
       [(preferences:get 'framework:automatic-parens)
-       (insert-brace-pair text open-brace close-brace)]
+       (define c (immediately-following-cursor text))
+       (define when-inserted (position-type-when-inserted text (string open-brace)))
+       (cond
+         ; insert paren pair if it results valid parenthesis token...
+         [(member open-brace open-parens)
+          (if (eq? (position-type-when-inserted text (string open-brace)) 'parenthesis)
+              (insert-brace-pair text open-brace close-brace)
+              (send text insert open-brace))]
+         
+         ; ASSUME: from here on, open-brace is either "  or  |
+         ; is there a token error at current position which would 
+         ; be fixed by inserting the character...
+         [(and (eq? 'error (send text classify-position (send text get-start-position)))
+               (not (eq? 'error when-inserted)))
+          (send text insert open-brace)]
+         
+         ; smart-skip over a  "  |  or  |# ...
+         [(and c (char=? #\" open-brace) (string=? c "\""))
+          (send text set-position (+ 1 (send text get-end-position)))]
+         [(and c (char=? #\| open-brace) (string=? c "|"))
+          (send text set-position (+ 1 (send text get-end-position)))
+          (define d (immediately-following-cursor text))
+          (when (and d (string=? d "#"))   ; a block comment?
+            (send text set-position (+ 1 (send text get-end-position))))]
+
+         ; are we in a string or comment...
+         [(in-string/comment? text) (send text insert open-brace)]
+         
+         ; otherwise if open-brace would result in some literal
+         [(eq? 'constant when-inserted) (send text insert open-brace)]
+         
+         [else (insert-brace-pair text open-brace close-brace)])]
       [else
        (send text insert open-brace)]))
   
@@ -1548,6 +1670,10 @@
   
   ;(map-meta "c:m" "mark-matching-parenthesis")
   ; this keybinding doesn't interact with the paren colorer
+
+  (map-meta ")" "balance-parens-forward")
+  (map-meta "]" "balance-parens-forward")
+  (map-meta "}" "balance-parens-forward")
   
   (map-meta "(" "insert-()-pair")
   (map-meta "[" "insert-[]-pair")
@@ -1672,7 +1798,9 @@
     (send text delete pos (+ pos 1) #f)
     (send text end-edit-sequence)
     (cond
-      [(preferences:get 'framework:automatic-parens)
+      [(and (preferences:get 'framework:automatic-parens)
+            (not (in-string/comment? text))
+            (eq? (position-type-when-inserted text real-char) 'parenthesis))
        (send text insert (case real-char
                            [(#\() #\)]
                            [(#\[) #\]]

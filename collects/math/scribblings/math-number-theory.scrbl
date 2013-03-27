@@ -107,6 +107,9 @@ factor 3:
                       (solve-chinese '(2 3 2) '(3 5 7))]  
 }
 
+
+
+@margin-note{Wikipedia: @hyperlink["http://en.wikipedia.org/wiki/Quadratic_residue"]{Quadratic Residue}}
 @defproc[(quadratic-residue? [a Integer] [n Integer]) Boolean]{
 Returns @racket[#t] if @racket[a] is a quadratic residue modulo @racket[n], otherwise @racket[#f].
 The modulus @racket[n] must be positive, and @racket[a] must be nonnegative.
@@ -123,6 +126,7 @@ In other words, @racket[(quadratic-residue? a n)] is @racket[#t] when
                  (quadratic-residue? 3 4)]
 }
 
+@margin-note{Wikipedia: @hyperlink["http://en.wikipedia.org/wiki/Legendre_symbol"]{Legendre Symbol}}
 @defproc[(quadratic-character [a Integer] [p Integer]) (U -1 0 1)]{
 Returns the value of the quadratic character modulo the prime @racket[p].                                                              
 That is, for a non-zero @racket[a] the number @racket[1] is returned when 
@@ -170,6 +174,7 @@ This function is also known as the @emph{Legendre symbol}.
 }
 
 @subsection[#:tag "modular"]{Parameterized Modular Arithmetic}
+@margin-note{Wikipedia: @hyperlink["http://en.wikipedia.org/wiki/Modular_arithmetic"]{Modular Arithmetic}}
 
 The @racketmodname[math/number-theory] library supports modular arithmetic parameterized on a current
 modulus. For example, the code
@@ -180,7 +185,7 @@ modulus. For example, the code
 corresponds with the mathematical statement
 @italic{a}@superscript{@italic{b}} = @italic{c} (mod @italic{n}).
 
-The current modulus is stored in a @tech{parameter} that, for performance reasons, can only be
+The current modulus is stored in a parameter that, for performance reasons, can only be
 set using @racket[with-modulus]. (The basic modular operators cache parameter reads, and this
 restriction guarantees that the cached values are current.)
 
@@ -273,6 +278,7 @@ So the problem isn't that @racket[b] doesn't exist, it's that @racket[b] isn't @
 @section[#:tag "primes"]{Primes}
 
 
+@margin-note{Wikipedia: @hyperlink["http://en.wikipedia.org/wiki/Prime_number"]{Prime Number}}
 @defproc[(prime? [z Integer]) Boolean]{
 Returns @racket[#t] if @racket[z] is a prime, @racket[#f] otherwise.
 
@@ -346,6 +352,7 @@ Returns list of the next @racket[n] primes smaller than @racket[z]; @racket[n] m
                     (prev-primes 13 4)]
 }
 
+@margin-note{Wikipedia: @hyperlink["http://en.wikipedia.org/wiki/Integer_factorization"]{Integer Factorization}}
 @defproc[(factorize [n Natural]) (Listof (List Natural Natural))]{
 Returns the factorization of a natural number @racket[n].
 The factorization consists of a list of corresponding 
@@ -397,7 +404,7 @@ Returns a list of the exponents of in a factorization of the integer
 
 @defproc[(integer-root [n Natural] [m Natural]) Natural]{
 Returns the @racket[m]th integer root of @racket[n].
-This is the largest number @racket[r] such that 
+This is the largest integer @racket[r] such that 
 @racket[(expt r m) <= n].
 
  @interaction[#:eval untyped-eval
@@ -443,6 +450,7 @@ is returned, otherwise @racket[#f] is returned.
 }
 
  
+@margin-note{Wikipedia: @hyperlink["http://en.wikipedia.org/wiki/Perfect_power"]{Perfect Power}}
 @defproc[(perfect-power? [m Integer]) Boolean]{
 Returns @racket[#t] if @racket[m] is a perfect power,
 otherwise @racket[#f].        
@@ -561,17 +569,30 @@ Note: The function @racket[prime-omega] is multiplicative.
                     (prime-omega (* 2 2 2 3 3 5))]
 }
 
+@margin-note{Wikipedia: @hyperlink["http://en.wikipedia.org/wiki/Von_Mangoldt_function"]{Von Mangoldt Function}}
+@defproc[(mangoldt-lambda [n Natural]) Real]{
+The von Mangoldt function. 
+If @racket[n=p^k] for a prime @racket[p] and an integer @racket[k>=1] then @racket[(log n)] is returned.                                             
+Otherwise 0 is returned.
+
+@interaction[#:eval untyped-eval         
+                    (mangoldt-lambda (* 3 3))
+                    (log 3)]
+}
+
+
+
 @; ----------------------------------------
 @section[#:tag "number-sequences"]{Number Sequences}
 
 @margin-note{Wikipedia: @hyperlink["http://en.wikipedia.org/wiki/Bernoulli_number"]{Bernoulli Number}}
-@defproc[(bernoulli [n Integer]) Exact-Rational]{
+@defproc[(bernoulli-number [n Integer]) Exact-Rational]{
   Returns the @racket[n]th Bernoulli number; @racket[n] must be nonnegative.
 
   @interaction[#:eval untyped-eval
-                      (map bernoulli (range 9))]
+                      (map bernoulli-number (range 9))]
   
-  Note that these are the @italic{first} Bernoulli numbers, since @racket[(bernoulli 1) = -1/2].
+  Note that these are the @italic{first} Bernoulli numbers, since @racket[(bernoulli-number 1) = -1/2].
 }
 
 @margin-note{MathWorld: @hyperlink["http://mathworld.wolfram.com/EulerianNumber.html"]{Eulerian Number}}
@@ -591,25 +612,41 @@ Note: The function @racket[prime-omega] is multiplicative.
                       (map fibonacci (range 10))]
 }
 
-@defproc[(fibonacci/mod [n Integer] [m Integer]) Natural]{
+@defproc[(make-fibonacci [a Integer] [b Integer]) (Integer -> Integer)]{
+Returns a function representing @italic{a} Fibonacci sequence with the first two numbers
+@racket[a] and @racket[b]. The @racket[fibonacci] function is defined as
+@racket[(make-fibonacci 0 1)].
+
+@margin-note{Wikipedia: @hyperlink["http://wikipedia.org/wiki/Lucas_number"]{Lucas Number}}
+The Lucas numbers are defined as a Fibonacci sequence starting with 2 and 1:
+@interaction[#:eval untyped-eval
+                    (map (make-fibonacci 2 1) (range 10))]
+}
+
+@defproc[(modular-fibonacci [n Integer] [m Integer]) Natural]{
   Returns the @racket[n]th Fibonacci number modulo @racket[m]; @racket[n] must be nonnegative
   and @racket[m] must be positive.
 
   The ten first Fibonacci numbers modulo 5.
   @interaction[#:eval untyped-eval
-                      (map (λ (n) (fibonacci/mod n 5)) (range 10))]
+                      (map (λ (n) (modular-fibonacci n 5)) (range 10))]
 }
 
-@defproc[(farey [n Integer]) (Listof Exact-Rational)]{
+@defproc[(make-modular-fibonacci [a Integer] [b Integer]) (Integer Integer -> Integer)]{
+Like @racket[make-fibonacci], but makes a modular Fibonacci sequence.
+}
+
+@margin-note{Wikipedia: @hyperlink["http://en.wikipedia.org/wiki/Farey_sequence"]{Farey Sequence}}
+@defproc[(farey-sequence [n Integer]) (Listof Exact-Rational)]{
 Returns a list of the numbers in the @racket[n]th Farey sequence; @racket[n] must be positive.
 
 The @racket[n]th Farey sequence is the sequence of all 
 completely reduced rational numbers from 0 to 1 which denominators
 are less than or equal to @racket[n].
   @interaction[#:eval untyped-eval
-                      (farey 1)
-                      (farey 2)
-                      (farey 3)]
+                      (farey-sequence 1)
+                      (farey-sequence 2)
+                      (farey-sequence 3)]
 }
 
 @margin-note{MathWorld: @hyperlink["http://mathworld.wolfram.com/TangentNumber.html"]{Tangent Number}}
@@ -626,6 +663,7 @@ Returns the @racket[n]th tangent number; @racket[n] must be nonnegative.
 @; ----------------------------------------
 @section[#:tag "combinatorics"]{Combinatorics}
 
+@margin-note{Wikipedia: @hyperlink["http://en.wikipedia.org/wiki/Factorial"]{Factorial}}
 @defproc[(factorial [n Integer]) Natural]{
   Returns the factorial of @racket[n], which must be nonnegative.
   The factorial of @racket[n] is the number @racket[(* n (- n 1) (- n 2) ... 1)].
@@ -634,6 +672,7 @@ Returns the @racket[n]th tangent number; @racket[n] must be nonnegative.
                       (factorial 0)]
 }
 
+@margin-note{Wikipedia: @hyperlink["http://en.wikipedia.org/wiki/Binomial_coefficient"]{Binomial Coefficient}}
 @defproc[(binomial [n Integer] [k Integer]) Natural]{
   Returns the number of ways to choose a @italic{set} of @racket[k] items from a set of
   @racket[n] items; i.e. the order of the @racket[k] items is not significant.
@@ -646,6 +685,9 @@ Returns the @racket[n]th tangent number; @racket[n] must be nonnegative.
                       (binomial 5 3)]
 }
 
+
+@margin-note{Wikipedia: @hyperlink["http://en.wikipedia.org/wiki/Permutation#Permutations_in_combinatorics"]{
+Permutations}}
 @defproc[(permutations [n Integer] [k Integer]) Natural]{
   Returns the number of ways to choose a @italic{sequence} of @racket[k] items from a set of
   @racket[n] items; i.e. the order of the @racket[k] items is significant.
@@ -657,26 +699,34 @@ Returns the @racket[n]th tangent number; @racket[n] must be nonnegative.
                       (permutations 5 3)]
 }
 
+@margin-note{Wikipedia: @hyperlink["http://en.wikipedia.org/wiki/Multinomial_theorem#Multinomial_coefficients"]{Multinomial Coeffecient}}
 @defproc[(multinomial [n Integer] [ks (Listof Integer)]) Natural]{
-  A generalization of @racket[binomial] to multiple sets of choices; i.e.
-  @racket[(multinomial n (list k0 k1))] is the number of ways to choose a set of @racket[k0] items
-  and a set of @racket[k1] items from a set of @racket[n] items. All arguments must be nonnegative.
+  A generalization of @racket[binomial] to multiple sets of choices; e.g.
+  @racket[(multinomial n (list k0 k1 k2))] is the number of ways to choose a set of @racket[k0] items,
+  a set of @racket[k1] items, and a set of @racket[k2] items from a set of @racket[n] items.
+  All arguments must be nonnegative.
   
   When @racket[(apply + ks) = n], this is equivalent to
-  @racket[(apply / (factorial n) (map factorial ks))]. Otherwise, it returns @racket[0].
+  @racket[(apply / (factorial n) (map factorial ks))]. Otherwise, @racket[multinomial] returns @racket[0].
   @interaction[#:eval untyped-eval
-                      (multinomial 5 3 2)]
+                      (multinomial 5 '(3 2))
+                      (= (multinomial 8 '(5 3))
+                         (binomial 8 5)
+                         (binomial 8 3))
+                      (multinomial 10 '(5 3 2))
+                      (multinomial 0 '())
+                      (multinomial 4 '(1 1))]
 }
 
 @margin-note{Wikipedia: @hyperlink["http://en.wikipedia.org/wiki/Partition_(number_theory)"]{Partition}}
-@defproc[(partition-count [n Integer]) Natural]{
+@defproc[(partitions [n Integer]) Natural]{
   Returns the number of partitions of @racket[n], which must be nonnegative.
   A partition of a positive integer @racket[n] is a way 
   of writing @racket[n] as a sum of positive integers.
   The number 3 has the partitions @racket[(+ 1 1 1)], @racket[(+ 1 2)] and @racket[(+ 3)].
   @interaction[#:eval untyped-eval
-                      (partition-count 3)
-                      (partition-count 4)]
+                      (partitions 3)
+                      (partitions 4)]
 }
 
 
@@ -685,35 +735,34 @@ Returns the @racket[n]th tangent number; @racket[n] must be nonnegative.
 
 @subsection{Polygonal Numbers}
 
-@defproc[(triangle? [n Natural]) Boolean]{}
-@defproc[(square? [n Natural]) Boolean]{}
-@defproc[(pentagonal? [n Natural]) Boolean]{}
-@defproc[(hexagonal? [n Natural]) Boolean]{}
-@defproc[(heptagonal? [n Natural]) Boolean]{}
-@defproc[(octagonal? [n Natural]) Boolean]{
-The functions 
-@racket[triangle?], @racket[square?], @racket[pentagonal?],
-@racket[hexagonal?],@racket[heptagonal?] and @racket[octagonal?] 
-checks whether the input is a polygonal number of the types
+@margin-note{Wikipedia: @hyperlink["http://en.wikipedia.org/wiki/Polygonal_number"]{Polygonal Number}}
+@deftogether[
+(@defproc[(triangle-number? [n Natural]) Boolean]
+  @defproc[(square-number? [n Natural]) Boolean]
+  @defproc[(pentagonal-number? [n Natural]) Boolean]
+  @defproc[(hexagonal-number? [n Natural]) Boolean]
+  @defproc[(heptagonal-number? [n Natural]) Boolean]
+  @defproc[(octagonal-number? [n Natural]) Boolean])]{
+These functions check whether the input is a polygonal number of the types
 triangle, square, pentagonal, hexagonal, heptagonal and octogonal 
 respectively.
 }
 
-@defproc[(triangle [n Natural]) Natural]{}
-@defproc[(sqr [n Natural]) Natural]{}
-@defproc[(pentagonal [n Natural]) Natural]{}
-@defproc[(hexagonal [n Natural]) Natural]{}
-@defproc[(heptagonal [n Natural]) Natural]{}
-@defproc[(octagonal [n Natural]) Natural]{
-The functions @racket[triangle], @racket[sqr], @racket[pentagonal],
-@racket[hexagonal],@racket[heptagonal] and @racket[octagonal] 
-return the @racket[n]th polygonal number of the corresponding
-type of polygonal number.
+@deftogether[
+(@defproc[(triangle-number [n Natural]) Natural]
+@defproc[(sqr [n Natural]) Natural]
+@defproc[(pentagonal-number [n Natural]) Natural]
+@defproc[(hexagonal-number [n Natural]) Natural]
+@defproc[(heptagonal-number [n Natural]) Natural]
+@defproc[(octagonal-number [n Natural]) Natural])]{
+These functions return the @racket[n]th polygonal number 
+of the corresponding type of polygonal number.
 }
 
 
 @; ----------------------------------------
 
+@margin-note{Wikipedia: @hyperlink["http://en.wikipedia.org/wiki/Mediant_(mathematics)"]{Mediant}}
 @section[#:tag "fractions"]{Fractions}
 @defproc[(mediant [x Exact-Rational] [y Exact-Rational]) Exact-Rational]{
 Computes the @racket[mediant] of the numbers @racket[x] and @racket[y].
@@ -755,6 +804,8 @@ Returns a list of all natural solutions to the equation @math-style{a x^2 + b x 
 @; ----------------------------------------
 @section[#:tag "primitive_roots"]{The group Zn and Primitive Roots}
 
+@margin-note{Wikipedia: @hyperlink["http://en.wikipedia.org/wiki/Multiplicative_group_of_integers_modulo_n"]{
+The Group Zn}}
 The numbers @math-style{0, 1, ..., n-1} with addition and multiplication
 modulo @racket[n] is a ring called @math-style{Zn}. 
 
@@ -777,21 +828,21 @@ modulus @racket[n] must be positive.
                       (unit-group 6)]  
 }
 
-@defproc[(order [x Integer] [n Integer]) Positive-Integer]{
+@defproc[(unit-group-order [x Integer] [n Integer]) Positive-Integer]{
 Returns the order of @racket[x] in the group @math-style{Un}; both arguments must be positive.
-If @racket[x] and @racket[n] are not coprime, @racket[(order x n)] raises an error.
+If @racket[x] and @racket[n] are not coprime, @racket[(unit-group-order x n)] raises an error.
   @interaction[#:eval untyped-eval
-                      (order 2 5)
-                      (order 2 6)]  
+                      (unit-group-order 2 5)
+                      (unit-group-order 2 6)]  
 }
 
-@defproc[(orders [n Integer]) (Listf Positive-Integer)]{
-Returns a list @racket[(list (order x0 n) (order x1 n) ...)] where
+@defproc[(unit-group-orders [n Integer]) (Listf Positive-Integer)]{
+Returns a list @racket[(list (unit-group-order x0 n) (unit-group-order x1 n) ...)] where
 @racket[x0], @racket[x1], ... are the elements of @math-style{Un}.
 The modulus @racket[n] must be positive.
   @interaction[#:eval untyped-eval
-                      (orders 5)
-                      (map (curryr order 5) (unit-group 5))]
+                      (unit-group-orders 5)
+                      (map (curryr unit-group-order 5) (unit-group 5))]
 }
 
 @defproc[(primitive-root? [x Integer] [n Integer]) Boolean]{

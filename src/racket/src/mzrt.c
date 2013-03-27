@@ -1,6 +1,6 @@
 /*
   Racket
-  Copyright (c) 2009-2012 PLT Scheme Inc.
+  Copyright (c) 2009-2013 PLT Design Inc.
 
     This library is free software; you can redistribute it and/or
     modify it under the terms of the GNU Library General Public
@@ -596,7 +596,7 @@ typedef struct mzrt_rwlock {
   HANDLE readEvent;
   HANDLE writeMutex;
   LONG readers;
-} mzrt_rwlock;
+};
 
 int mzrt_rwlock_create(mzrt_rwlock **lock) {
   *lock = malloc(sizeof(mzrt_rwlock));

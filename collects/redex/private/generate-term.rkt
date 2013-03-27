@@ -159,7 +159,8 @@
 (define (check generator property attempts retries show
                #:source [source #f]
                #:term-fix [term-fix #f]
-               #:term-match [term-match #f])
+               #:term-match [term-match #f]
+               #:skip-term? [skip-term? (λ (x) #f)])
   (let loop ([remaining attempts])
     (if (zero? remaining)
         #t
@@ -180,62 +181,72 @@
                                     term))))))])
             (let ([term (with-handlers ([exn:fail? (handler "fixing" term)])
                           (if term-fix (term-fix term) term))])
-              (if (if term-match
-                      (let ([bindings (make-bindings 
-                                       (match-bindings
-                                        (pick-from-list (term-match term))))])
-                        (with-handlers ([exn:fail? (handler "checking" term)])
-                          (match property
-                            [(term-prop pred) (pred term)]
-                            [(bind-prop pred) (pred bindings)])))
-                      (with-handlers ([exn:fail? (handler "checking" term)])
-                        (match (cons property term-fix)
-                          [(cons (term-prop pred) _) (pred term)]
-                          [(cons (bind-prop pred) #f) (pred bindings)])))
-                  (loop (sub1 remaining))
-                  (begin
-                    (when show
-                      (show
-                       (format "counterexample found after ~a~a:\n"
-                               (format-attempts attempt)
-                               (if source (format " with ~a" source) "")))
-                      (pretty-write term (current-output-port)))
-                    (make-counterexample term)))))))))
+              (cond
+                [(skip-term? term) (loop (- remaining 1))]
+                [else
+                 (if (if term-match
+                         (let ([bindings (make-bindings 
+                                          (match-bindings
+                                           (pick-from-list (term-match term))))])
+                           (with-handlers ([exn:fail? (handler "checking" term)])
+                             (match property
+                               [(term-prop pred) (pred term)]
+                               [(bind-prop pred) (pred bindings)])))
+                         (with-handlers ([exn:fail? (handler "checking" term)])
+                           (match (cons property term-fix)
+                             [(cons (term-prop pred) _) (pred term)]
+                             [(cons (bind-prop pred) #f) (pred bindings)])))
+                     (loop (sub1 remaining))
+                     (begin
+                       (when show
+                         (show
+                          (format "counterexample found after ~a~a:\n"
+                                  (format-attempts attempt)
+                                  (if source (format " with ~a" source) "")))
+                         (pretty-write term (current-output-port)))
+                       (make-counterexample term)))])))))))
 
 (define (check-lhs-pats lang mf/rr prop attempts retries what show term-fix
                         #:term-match [term-match #f])
-  (let ([lang-gen (compile lang what)])
-    (let-values ([(pats srcs)
-                  (cond [(metafunc-proc? mf/rr)
-                         (values (map (λ (case) ((metafunc-case-lhs+ case) lang)) 
-                                      (metafunc-proc-cases mf/rr))
-                                 (metafunction-srcs mf/rr))]
-                        [(reduction-relation? mf/rr)
-                         (values (map (λ (rwp) ((rewrite-proc-lhs rwp) lang)) (reduction-relation-make-procs mf/rr))
-                                 (reduction-relation-srcs mf/rr))])])
-      (let loop ([pats pats] [srcs srcs])
-        (if (and (null? pats) (null? srcs))
-            (if show
-                (show
-                 (format "no counterexamples in ~a (with each clause)\n"
-                         (format-attempts attempts)))
-                #t)
-            (let ([c (with-handlers ([exn:fail:redex:generation-failure?
-                                      ; Produce an error message that blames the LHS as a whole.
-                                      (λ (_)
-                                        (raise-gen-fail what (format "LHS of ~a" (car srcs)) retries))])
-                       (check
-                        (lang-gen (car pats))
-                        prop
-                        attempts
-                        retries
-                        show
-                        #:source (car srcs)
-                        #:term-match term-match
-                        #:term-fix term-fix))])
-              (if (counterexample? c)
-                  (unless show c)
-                  (loop (cdr pats) (cdr srcs)))))))))
+  (define lang-gen (compile lang what))
+  (define-values (pats srcs skip-term?)
+    (cond [(metafunc-proc? mf/rr)
+           (values (map (λ (case) ((metafunc-case-lhs+ case) lang)) 
+                        (metafunc-proc-cases mf/rr))
+                   (metafunction-srcs mf/rr)
+                   (compose not (metafunc-proc-in-dom? mf/rr)))]
+          [(reduction-relation? mf/rr)
+           (values (map (λ (rwp) ((rewrite-proc-lhs rwp) lang)) (reduction-relation-make-procs mf/rr))
+                   (reduction-relation-srcs mf/rr)
+                   (let ([pat (compile-pattern (reduction-relation-lang mf/rr)
+                                               (reduction-relation-domain-pat mf/rr)
+                                               #f)])
+                     (λ (x) (not (match-pattern? pat x)))))]))
+  
+  (let loop ([pats pats] [srcs srcs])
+    (if (and (null? pats) (null? srcs))
+        (if show
+            (show
+             (format "no counterexamples in ~a (with each clause)\n"
+                     (format-attempts attempts)))
+            #t)
+        (let ([c (with-handlers ([exn:fail:redex:generation-failure?
+                                  ; Produce an error message that blames the LHS as a whole.
+                                  (λ (_)
+                                    (raise-gen-fail what (format "LHS of ~a" (car srcs)) retries))])
+                   (check
+                    (lang-gen (car pats))
+                    prop
+                    attempts
+                    retries
+                    show
+                    #:skip-term? skip-term?
+                    #:source (car srcs)
+                    #:term-match term-match
+                    #:term-fix term-fix))])
+          (if (counterexample? c)
+              (unless show c)
+              (loop (cdr pats) (cdr srcs)))))))
 
 (define-syntax (check-metafunction stx)
   (syntax-case stx ()
@@ -322,7 +333,6 @@
      (cond
        [(metafunc #'jf/mf-id)
         (let ()
-          (define relation? (term-fn-get-info (syntax-local-value #'jf/mf-id)))
           (define (signal-error whatever)
             (when (stx-pair? whatever)
               (define cr (syntax-e (stx-car whatever)))
@@ -334,28 +344,24 @@
             (raise-syntax-error 'generate-term
                                 "expected a metafunction result and a size"
                                 stx))
-          (if relation?
-              (raise-syntax-error 'generate-term
-                                  "relations are not yet supported"
-                                  stx)
-              (let ([body-code 
-                     (λ (res size)
-                       #`(generate-mf-pat language (jf/mf-id . args) #,res #,size))])
-                (syntax-case #'rest (=)
-                  [(= res) 
-                   #`(λ (size) 
-                       #,(body-code #'res #'size))]
-                  [(= res size)
-                   (body-code #'res #'size)]
-                  [(x . y)
-                   (or (not (identifier? #'x))
-                       (not (free-identifier=? #'= #'x)))
-                   (raise-syntax-error 'generate-term
-                                       "expected to find ="
-                                       stx
-                                       #'x)]
-                  [whatever
-                   (signal-error #'whatever)]))))]
+          (let ([body-code 
+                 (λ (res size)
+                   #`(generate-mf-pat language (jf/mf-id . args) #,res #,size))])
+            (syntax-case #'rest (=)
+              [(= res) 
+               #`(λ (size) 
+                   #,(body-code #'res #'size))]
+              [(= res size)
+               (body-code #'res #'size)]
+              [(x . y)
+               (or (not (identifier? #'x))
+                   (not (free-identifier=? #'= #'x)))
+               (raise-syntax-error 'generate-term
+                                   "expected to find ="
+                                   stx
+                                   #'x)]
+              [whatever
+               (signal-error #'whatever)])))]
        [(judgment-form-id? #'jf/mf-id)
         (syntax-case #'rest ()
           [() 
@@ -382,9 +388,11 @@
                     => (λ (f)
                          #`(let* ([f #,f]
                                   [L (metafunc-proc-lang f)]
-                                  [compile-pat (compile L '#,form-name)])
+                                  [compile-pat (compile L '#,form-name)]
+                                  [cases (metafunc-proc-cases f)])
+                             (check-cases 'src cases)
                              (map (λ (c) (compile-pat ((metafunc-case-lhs+ c) L))) 
-                                  (metafunc-proc-cases f))))]
+                                  cases)))]
                    [else
                     #`(let* ([r #,(apply-contract #'reduction-relation?  #'src "#:source argument" form-name)]
                              [L (reduction-relation-lang r)]
@@ -407,6 +415,10 @@
          [(size . kw-args)
           (quasisyntax/loc stx
             (#,generator-syntax size . kw-args))]))]))
+
+(define (check-cases name cases)
+  (when (null? cases)
+    (raise-gen-fail 'generate-term (format "from ~a metafunction (it has no clauses)" name) 1)))
 
 (define-syntax (generate-mf-pat stx)
   (syntax-case stx ()
@@ -434,10 +446,21 @@
           [(size)
            (let* ([j-f (lookup-judgment-form-id #'jf/mf-id)]
                   [clauses (judgment-form-gen-clauses j-f)]
-                  [nts (definition-nts #'lang-id stx 'redex-generator)])
+                  [nts (definition-nts #'lang-id stx 'redex-generator)]
+                  [relation? (judgment-form-relation? j-f)]
+                  [args-stx (if relation?
+                                (syntax/loc #'args (args))
+                                #'args)]) 
              (with-syntax ([(pat (names ...) (names/ellipses ...))
-                            (rewrite-side-conditions/check-errs nts 'redex-generator #t #'args)])
-               #`(make-jf-gen/proc 'jf/mf-id #,clauses lang-id 'pat size)))]
+                            (rewrite-side-conditions/check-errs nts 'redex-generator #t args-stx)])
+               (if relation?
+                   #`(let ([gen-proc (make-jf-gen/proc 'jf/mf-id #,clauses lang-id 'pat size)])
+                       (λ ()
+                         (match (gen-proc)
+                           [`(,jf-name (,trms (... ...)))
+                            `(,jf-name ,@trms)]
+                           [#f #f])))
+                   #`(make-jf-gen/proc 'jf/mf-id #,clauses lang-id 'pat size))))]
           [_
            (raise-syntax-error 'redex-generator 
                                "expected an integer depth bound"

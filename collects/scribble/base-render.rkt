@@ -39,7 +39,9 @@
     render-nested-flow
     render-block
     render-other
-    get-dest-directory))
+    get-dest-directory
+    format-number
+    number-depth))
 
 (define render%
   (class* object% (render<%>)
@@ -70,24 +72,55 @@
 
     (define/public (format-number number sep)
       (if (or (null? number)
-              (andmap not number))
-        null
-        (cons (let ([s (apply
-                        string-append
-                        (map (lambda (n) (if n (format "~s." n) ""))
-                             (reverse number)))])
-                (substring s 0 (sub1 (string-length s))))
-              sep)))
+              (andmap (lambda (x) (or (not x) (equal? x "")))
+                      number)
+              (and (not (car number))
+                   (not (ormap number? number))))
+          null
+          (cons (let ([s (string-append
+                          (apply
+                           string-append
+                           (map (lambda (n) (if (number? n) (format "~a." n) ""))
+                                (reverse (cdr number))))
+                          (if (and (car number) 
+                                   (not (equal? "" (car number))))
+                              (format "~a." (car number)) 
+                              ""))])
+                  (substring s 0 (sub1 (string-length s))))
+                sep)))
+
+    (define/public (number-depth number)
+      (if (null? number)
+          0
+          (+ 1 (for/sum ([i (in-list (cdr number))]) (if (not (string? i)) 1 0)))))
 
     (field [report-output?? #f])
     (define/public (report-output?) report-output??)
     (define/public (report-output!) (set! report-output?? #t))
 
+    ;; should work up to 3999:
+    (define/private (number->roman n)
+      (let loop ([n n]
+                 [I #\I] [V #\V]
+                 [X #\X] [L #\L]
+                 [C #\C] [D #\D]
+                 [M #\M])
+        (case n
+          [(0) ""]
+          [(1 2 3) (make-string n I)]
+          [(4) (string I V)]
+          [(5) (string V)]
+          [(6 7 8) (string-append (string V) (make-string (- n 5) I))]
+          [(9) (string I X)]
+          [else 
+           (string-append (loop (quotient n 10) X L C D M D M)
+                          (loop (modulo n 10) I V X L C D M))])))
+
     ;; ----------------------------------------
 
-    (define/public (extract-part-style-files d ri tag stop-at-part? pred extract)
+    (define/public (extract-part-style-files d ri stop-at-part? pred extract)
       (let ([ht (make-hash)])
-        (let loop ([p d][up? #t][only-up? #f])
+        (let loop ([p d] [up? #t] [only-up? #f])
           (let ([s (part-style p)])
             (when up?
               (let ([p (collected-info-parent (part-collected-info p ri))])
@@ -104,14 +137,19 @@
                            (unless (stop-at-part? p)
                              (loop p #f #f)))
                          (part-parts p)))))
-        (for/list ([k (in-hash-keys ht)]) (if (or (bytes? k) (url? k))
-                                              k 
-                                              (main-collects-relative->path k)))))
+        (map cdr
+             (sort
+              (for/list ([(k v) (in-hash ht)])
+                (cons v (if (or (bytes? k) (url? k))
+                            k 
+                            (main-collects-relative->path k))))
+              <
+              #:key car))))
 
     (define/private (extract-style-style-files s ht pred extract)
       (for ([v (in-list (style-properties s))])
         (when (pred v)
-          (hash-set! ht (extract v) #t))))
+          (hash-update! ht (extract v) values (hash-count ht)))))
 
     (define/private (extract-flow-style-files blocks d ri ht pred extract)
       (for ([b (in-list blocks)])
@@ -256,10 +294,49 @@
     (define/public (get-serialize-version)
       4)
 
+    (define/public (serialize-infos ri n d)
+      (if (= n 1)
+          (list (serialize-info ri))
+          (map (lambda (ht) (serialize-one-ht ri ht))
+               (partition-info (resolve-info-ci ri) n d))))
+
+    (define/private (partition-info all-ci n d)
+      ;; partition information in `all-ci' based on `d's:
+      (let ([prefix (part-tag-prefix d)]
+            [new-hts (for/list ([i (in-range n)])
+                       (make-hash))]
+            [covered (make-hash)])
+        ;; Fill in new-hts from parts:
+        (for ([sub-d (in-list (part-parts d))]
+              [i (in-naturals)])
+          (define ht (list-ref new-hts (min (add1 i) (sub1 n))))
+          (define cdi (hash-ref (collect-info-parts all-ci) sub-d #f))
+          (define sub-prefix (part-tag-prefix sub-d))
+          (when cdi
+            (for ([(k v) (in-hash (collected-info-info cdi))])
+              (when (cadr k)
+                (define sub-k (if sub-prefix
+                                  (convert-key sub-prefix k)
+                                  k))
+                (define full-k (if prefix
+                                   (convert-key prefix sub-k)
+                                   sub-k))
+                (hash-set! ht full-k v)
+                (hash-set! covered full-k #t)))))
+        ;; Anything not covered in the new-hts must go in the main hts:
+        (let ([ht0 (car new-hts)])
+          (for ([(k v) (in-hash (collect-info-ht all-ci))])
+            (unless (hash-ref covered k #f)
+              (hash-set! ht0 k v))))
+        ;; Return hts:
+        new-hts))
+
     (define/public (serialize-info ri)
+      (serialize-one-ht ri (collect-info-ht (resolve-info-ci ri))))
+
+    (define/public (serialize-one-ht ri ht)
       (parameterize ([current-serialize-resolve-info ri])
-        (serialize (cons root
-                         (collect-info-ht (resolve-info-ci ri))))))
+        (serialize (cons root ht))))
 
     (define/public (deserialize-info v ci #:root [root-path #f])
       (let ([root+ht (deserialize v)]
@@ -271,6 +348,10 @@
 
     (define/public (get-defined ci)
       (hash-map (collect-info-ht ci) (lambda (k v) k)))
+
+    (define/public (get-defineds ci n d)
+      (for/list ([ht (partition-info ci n d)])
+        (hash-map ht (lambda (k v) k))))
 
     (define/public (get-external ri)
       (hash-map (resolve-info-undef ri) (lambda (k v) k)))
@@ -288,7 +369,11 @@
     (define/public (transfer-info ci src-ci)
       (let ([in-ht (collect-info-ext-ht ci)])
         (for ([(k v) (collect-info-ext-ht src-ci)])
-          (hash-set! in-ht k v))))
+          (hash-set! in-ht k v)))
+      (set-demand-chain-demands! 
+       (collect-info-ext-demand ci)
+       (cons (collect-info-ext-demand src-ci)
+             (demand-chain-demands (collect-info-ext-demand ci)))))
 
     ;; ----------------------------------------
     ;; document-order traversal
@@ -386,10 +471,11 @@
     ;; ----------------------------------------
     ;; global-info collection
 
-    (define/public (collect ds fns fp)
+    (define/public (collect ds fns fp [demand (lambda (key ci) #f)])
       (let ([ci (make-collect-info fp
                                    (make-hash)
                                    (make-hash)
+                                   (make-demand-chain (list demand))
                                    (make-hasheq)
                                    (make-hasheq)
                                    null
@@ -399,14 +485,15 @@
         ci))
 
     (define/public (start-collect ds fns ci)
-      (map (lambda (d) (collect-part d #f ci null))
+      (map (lambda (d) (collect-part d #f ci null 1))
            ds))
 
-    (define/public (collect-part d parent ci number)
+    (define/public (collect-part d parent ci number init-sub-number)
       (let ([p-ci (make-collect-info
                    (collect-info-fp ci)
                    (make-hash)
                    (collect-info-ext-ht ci)
+                   (collect-info-ext-demand ci)
                    (collect-info-parts ci)
                    (collect-info-tags ci)
                    (if (part-tag-prefix d)
@@ -420,33 +507,56 @@
                    (make-collected-info number
                                         parent
                                         (collect-info-ht p-ci)))
-        (parameterize ([current-tag-prefixes
-                        (extend-prefix d (fresh-tag-collect-context? d p-ci))])
-          (when (part-title-content d)
-            (collect-content (part-title-content d) p-ci))
-          (collect-part-tags d p-ci number)
-          (collect-content (part-to-collect d) p-ci)
-          (collect-flow (part-blocks d) p-ci)
-          (let loop ([parts (part-parts d)]
-                     [pos 1])
-            (unless (null? parts)
-              (let ([s (car parts)])
-                (collect-part s d p-ci
-                              (cons (if (part-style? s 'unnumbered)
-                                        #f 
-                                        pos)
-                                    number))
-                (loop (cdr parts)
-                      (if (part-style? s 'unnumbered)
-                          pos
-                          (add1 pos)))))))
+        (define grouper? (and (pair? number) (part-style? d 'grouper)))
+        (define next-sub-number
+          (parameterize ([current-tag-prefixes
+                          (extend-prefix d (fresh-tag-collect-context? d p-ci))])
+            (when (part-title-content d)
+              (collect-content (part-title-content d) p-ci))
+            (collect-part-tags d p-ci number)
+            (collect-content (part-to-collect d) p-ci)
+            (collect-flow (part-blocks d) p-ci)
+            (let loop ([parts (part-parts d)]
+                       [pos init-sub-number]
+                       [sub-pos 1])
+              (if (null? parts)
+                  pos
+                  (let ([s (car parts)])
+                    (define unnumbered? (part-style? s 'unnumbered))
+                    (define hidden-number? (or unnumbered?
+                                               (part-style? s 'hidden-number)))
+                    (define sub-grouper? (part-style? s 'grouper))
+                    (define next-sub-pos
+                      (collect-part s d p-ci
+                                    (cons (if hidden-number?
+                                              (if sub-grouper?
+                                                  ""
+                                                  #f)
+                                              (if sub-grouper?
+                                                  (number->roman pos)
+                                                  pos))
+                                          (if hidden-number?
+                                              (for/list ([i (in-list number)])
+                                                (if (string? i)
+                                                    i
+                                                    #f))
+                                              number))
+                                    sub-pos))
+                    (loop (cdr parts)
+                          (if unnumbered?
+                              pos
+                              (add1 pos))
+                          (if sub-grouper?
+                              next-sub-pos
+                              1)))))))
         (let ([prefix (part-tag-prefix d)])
           (for ([(k v) (collect-info-ht p-ci)])
             (when (cadr k)
               (collect-put! ci (if prefix
                                    (convert-key prefix k) 
                                    k) 
-                            v))))))
+                            v))))
+        next-sub-number))
 
     (define/private (convert-key prefix k)
       (case (car k)
@@ -873,9 +983,8 @@
                                    (not (= base-len (sub1 (length number))))))
                        (positive? depth))
                   (apply append (map (lambda (p)
-                                       (if (part-style? p 'toc-hidden)
-                                           null
-                                           (generate-toc p ri base-len #f quiet (sub1 depth) prefixes)))
+                                       (generate-toc p ri base-len (part-style? p 'toc-hidden) 
+                                                     quiet (sub1 depth) prefixes))
                                      (part-parts part)))
                   null)])
         (if skip?
@@ -901,7 +1010,11 @@
                                  (convert-key prefix t))))))
                       subs)])
               (if (and (= 1 (length number))
-                       (or (not (car number)) ((car number) . > . 1)))
+                       (or (not (car number)) 
+                           (and (number? (car number))
+                                ((car number) . > . 1))
+                           (and (string? (car number))
+                                (not (string=? (car number) "I")))))
                   (cons (list (make-paragraph
                                plain
                                (list (make-element 'hspace (list "")))))
@@ -911,3 +1024,12 @@
     ;; ----------------------------------------
 
     (super-new)))
+
+
+;; ----------------------------------------
+
+(define-struct demand-chain ([demands #:mutable])
+  #:property prop:procedure (lambda (self key ci)
+                              (for/or ([demand (in-list (demand-chain-demands self))])
+                                (demand key ci))))
+

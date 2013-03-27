@@ -11,6 +11,7 @@ added get-regions
          syntax-color/token-tree
          syntax-color/paren-tree
          syntax-color/default-lexer
+         syntax-color/lexer-contract
          string-constants
          "../preferences.rkt"
          "sig.rkt"
@@ -64,7 +65,8 @@ added get-regions
     get-token-range
     
     set-spell-check-strings
-    get-spell-check-strings))
+    get-spell-check-strings
+    get-spell-current-dict))
 
 (define text-mixin
   (mixin (text:basic<%>) (-text<%>)
@@ -92,6 +94,11 @@ added get-regions
     ;; true iff the colorer must recolor from scratch when the freeze
     ;; is over.
     (define force-recolor-after-freeze #f)
+    
+    ;; if we were coloring and discovered that an edit-sequence was 
+    ;; going on, then we postpone coloring until the edit-sequence
+    ;; ends
+    (define continue-after-edit-sequence? #f)
     
     ;; ---------------------- Parenethesis matching ----------------------
     
@@ -234,6 +241,13 @@ added get-regions
         (set! spell-check-strings? s)
         (reset-tokens)
         (start-colorer token-sym->style get-token pairs)))
+    (define current-dict (preferences:get 'framework:aspell-dict))
+    (define/public (set-spell-current-dict d)
+      (unless (equal? d current-dict)
+        (set! current-dict d)
+        (reset-tokens)
+        (start-colorer token-sym->style get-token pairs)))
+    (define/public (get-spell-current-dict) current-dict)
     
     ;; ---------------------- Multi-threading ---------------------------
     ;; The editor revision when the last coloring was started
@@ -271,6 +285,7 @@ added get-regions
        lexer-states)
       (update-lexer-state-observers)
       (set! restart-callback #f)
+      (set! continue-after-edit-sequence? #f)
       (set! force-recolor-after-freeze #f)
       (set! revision-when-started-parsing #f))
     
@@ -289,7 +304,7 @@ added get-regions
             (set-lexer-state-invalid-tokens-mode! ls mode))
           (sync-invalid ls))))
     
-    (define/private (re-tokenize-move-to-next-ls start-time did-something?)
+    (define/private (re-tokenize-move-to-next-ls start-time ok-to-stop?)
       (cond
         [(null? re-tokenize-lses) 
          ;; done: return #t
@@ -303,42 +318,37 @@ added get-regions
                                    (lexer-state-end-pos ls)
                                    (λ (x) #f)))
          (port-count-lines! in)
-         (continue-re-tokenize start-time did-something? ls in
+         (continue-re-tokenize start-time ok-to-stop? ls in
                                (lexer-state-current-pos ls)
                                (lexer-state-current-lexer-mode ls))]))
     
     (define re-tokenize-lses #f)
     
-    (define/private (continue-re-tokenize start-time did-something? ls in in-start-pos lexer-mode)
+    (define/private (continue-re-tokenize start-time ok-to-stop? ls in in-start-pos lexer-mode)
       (cond
-        [(and did-something? ((+ start-time 20.0) . <= . (current-inexact-milliseconds)))
+        [(and ok-to-stop? ((+ start-time 20.0) . <= . (current-inexact-milliseconds)))
          #f]
         [else
-         ;(define-values (_line1 _col1 pos-before) (port-next-location in))
-         (define-values (lexeme type data new-token-start new-token-end backup-delta new-lexer-mode) 
+         (define-values (_line1 _col1 pos-before) (port-next-location in))
+         (define-values (lexeme type data new-token-start new-token-end backup-delta new-lexer-mode/cont) 
            (get-token in in-start-pos lexer-mode))
-         ;(define-values (_line2 _col2 pos-after) (port-next-location in))
+         (define-values (_line2 _col2 pos-after) (port-next-location in))
+         (define new-lexer-mode (if (dont-stop? new-lexer-mode/cont)
+                                    (dont-stop-val new-lexer-mode/cont)
+                                    new-lexer-mode/cont))
+         (define next-ok-to-stop? (not (dont-stop? new-lexer-mode/cont)))
          (cond
            [(eq? 'eof type) 
-            (re-tokenize-move-to-next-ls start-time #t)]
+            (set-lexer-state-up-to-date?! ls #t)
+            (re-tokenize-move-to-next-ls start-time next-ok-to-stop?)]
            [else
-            (unless (exact-nonnegative-integer? new-token-start)
-              (error 'color:text<%> "expected an exact nonnegative integer for the token start, got ~e" new-token-start))
-            (unless (exact-nonnegative-integer? new-token-end)
-              (error 'color:text<%> "expected an exact nonnegative integer for the token end, got ~e" new-token-end))
-            (unless (exact-nonnegative-integer? backup-delta)
-              (error 'color:text<%> "expected an exact nonnegative integer for the backup delta, got ~e" backup-delta))
-            (unless (new-token-start . < . new-token-end)
+            (unless (<= pos-before new-token-start pos-after)
               (error 'color:text<%>
-                     "expected the distance between the start and end position for each token to be positive, but start was ~e and end was ~e"
-                     new-token-start new-token-end))
+                     "expected the token start to be between ~s and ~s, got ~s" pos-before pos-after new-token-start))
+            (unless (<= pos-before new-token-end pos-after)
+              (error 'color:text<%>
+                     "expected the token end to be between ~s and ~s, got ~s" pos-before pos-after new-token-end))
             (let ((len (- new-token-end new-token-start)))
-              #;
-              (unless (= len (- pos-after pos-before))
-                ;; this check requires the two calls to port-next-location to be also uncommented
-                ;; when this check fails, bad things can happen non-deterministically later on
-                (eprintf "pos changed bad ; len ~s pos-before ~s pos-after ~s (token ~s mode ~s)\n" 
-                         len pos-before pos-after lexeme new-lexer-mode))
               (set-lexer-state-current-pos! ls (+ len (lexer-state-current-pos ls)))
               (set-lexer-state-current-lexer-mode! ls new-lexer-mode)
               (sync-invalid ls)
@@ -363,9 +373,10 @@ added get-regions
                  (insert-last! (lexer-state-tokens ls)
                                (lexer-state-invalid-tokens ls))
                  (set-lexer-state-invalid-tokens-start! ls +inf.0)
-                 (re-tokenize-move-to-next-ls start-time #t)]
+                 (set-lexer-state-up-to-date?! ls #t)
+                 (re-tokenize-move-to-next-ls start-time next-ok-to-stop?)]
                 [else
-                 (continue-re-tokenize start-time #t ls in in-start-pos new-lexer-mode)]))])]))
+                 (continue-re-tokenize start-time next-ok-to-stop? ls in in-start-pos new-lexer-mode)]))])]))
 
     (define/private (add-colorings type in-start-pos new-token-start new-token-end)
       (define sp (+ in-start-pos (sub1 new-token-start)))
@@ -382,11 +393,11 @@ added get-regions
                        [pos sp])
               (unless (null? strs)
                 (define str (car strs))
-                (let loop ([spellos (query-aspell str)]
+                (let loop ([spellos (query-aspell str current-dict)]
                            [lp 0])
                   (cond
                     [(null? spellos) 
-                     (add-coloring color (+ sp lp) (+ sp (string-length str)))]
+                     (add-coloring color (+ pos lp) (+ pos (string-length str)))]
                     [else
                      (define err (car spellos))
                      (define err-start (list-ref err 0))
@@ -499,12 +510,19 @@ added get-regions
       (unless (andmap lexer-state-up-to-date? lexer-states)
         (begin-edit-sequence #f #f)
         (c-log "starting to color")
-        (set! re-tokenize-lses lexer-states)
-        (define finished? (re-tokenize-move-to-next-ls (current-inexact-milliseconds) #f))
+        (set! re-tokenize-lses (let loop ([lexer-states lexer-states])
+                                 (cond
+                                   [(null? lexer-states) null]
+                                   [else (if (lexer-state-up-to-date? (car lexer-states))
+                                             (loop (cdr lexer-states))
+                                             lexer-states)])))
+        (define finished? (re-tokenize-move-to-next-ls 
+                           (current-inexact-milliseconds) 
+                           ;; #f initially here ensures we do at least
+                           ;; one step of tokenization before giving up
+                           #f))
         (c-log (format "coloring stopped ~a" (if finished? "because it finished" "with more to do")))
         (when finished?
-          (for ([ls (in-list lexer-states)])
-            (set-lexer-state-up-to-date?! ls #t))
           (update-lexer-state-observers)
           (c-log "updated observers"))
         (c-log "starting end-edit-sequence")
@@ -516,10 +534,13 @@ added get-regions
         ((is-locked?)
          (set! restart-callback #t))
         (else
-         (unless (in-edit-sequence?)
-           (colorer-driver))
-         (unless (andmap lexer-state-up-to-date? lexer-states)
-           (queue-callback (λ () (colorer-callback)) #f)))))
+         (cond
+           [(in-edit-sequence?)
+            (set! continue-after-edit-sequence? #t)]
+           [else
+            (colorer-driver)
+            (unless (andmap lexer-state-up-to-date? lexer-states)
+              (queue-callback (λ () (colorer-callback)) #f))]))))
     
     ;; Must not be called when the editor is locked
     (define/private (finish-now)
@@ -657,14 +678,14 @@ added get-regions
     ;;   Otherwise, it treats it like a boolean, where a true value  
     ;;   means the normal paren color and #f means an error color. 
     ;; numbers are expected to have zero be start-pos.
-    (define/private (highlight ls start end caret-pos color)
+    (define/private (highlight ls start end caret-pos color [priority 'low])
       (let* ([start-pos (lexer-state-start-pos ls)]
              [off (highlight-range (+ start-pos start) (+ start-pos end)
                                    (if (is-a? color color%)
                                        color
                                        (if color mismatch-color (get-match-color)))
                                    (= caret-pos (+ start-pos start))
-                                   'low)])
+                                   priority)])
         (set! clear-old-locations
               (let ([old clear-old-locations])
                 (λ ()
@@ -731,14 +752,16 @@ added get-regions
     ;; highlight-nested-region : lexer-state number number number -> void
     ;; colors nested regions of parentheses.
     (define/private (highlight-nested-region ls orig-start orig-end here)
+      (define priority (get-parenthesis-priority))
+      (define paren-colors (get-parenthesis-colors))
       (let paren-loop ([start orig-start]
                        [end orig-end]
                        [depth 0])
-        (when (< depth (vector-length (get-parenthesis-colors)))
+        (when (< depth (vector-length paren-colors))
           
           ;; when there is at least one more color in the vector we'll look
           ;; for regions to color at that next level
-          (when (< (+ depth 1) (vector-length (get-parenthesis-colors)))
+          (when (< (+ depth 1) (vector-length paren-colors))
             (let seq-loop ([inner-sequence-start (+ start 1)])
               (when (< inner-sequence-start end)
                 (let ([post-whitespace (skip-whitespace inner-sequence-start 'forward #t)])
@@ -753,7 +776,7 @@ added get-regions
                        (λ (after-non-paren-thing)
                          (seq-loop after-non-paren-thing))]))))))
           
-          (highlight ls start end here (vector-ref (get-parenthesis-colors) depth)))))
+          (highlight ls start end here (vector-ref paren-colors depth) priority))))
     
     ;; See docs
     (define/public (forward-match position cutoff)
@@ -845,7 +868,12 @@ added get-regions
       (let loop ((cur-pos position))
         (let ((p (internal-backward-match cur-pos cutoff)))
           (cond
-            ((eq? 'open p) cur-pos)
+            ((eq? 'open p) 
+             ;; Should this function skip  
+             ;; backwards past whitespace? 
+             ;; the docs seem to indicate it
+             ;; does, but it doesn't really
+             cur-pos)
             ((not p) #f)
             (else (loop p))))))
     
@@ -884,6 +912,7 @@ added get-regions
         (tokenize-to-pos ls position)))
     
     ;; See docs
+    ;;  Note: this doesn't seem to handle sexp-comments correctly  .nah.
     (define/public (skip-whitespace position direction comments?)
       (when stopped?
         (error 'skip-whitespace "called on a color:text<%> whose colorer is stopped."))
@@ -915,66 +944,167 @@ added get-regions
                                      comments?))
                    (else position))))))))
     
+    ;; this returns the start/end positions
+    ;; of the matching close paren of the first open paren to the left of pos,
+    ;; if it is properly balanced. (this one assumes though that closers
+    ;; really contains only 'parenthesis type characters)
+    ;; find-next-outer-paren : number (list string)
+    ;;            -> (values (or #f number) (or #f number) (or #f string))
+    (define/private (find-next-outer-paren pos closers)
+      (let loop ([pos pos])
+        (define after-ws (skip-whitespace pos 'forward #f))
+        (cond
+          [after-ws
+           (define tok (classify-position after-ws))
+           (define-values (a b) (get-token-range after-ws))
+           (cond
+             [(eq? tok 'parenthesis)
+              (define str (get-text a b))
+              (cond
+                [(member str closers) 
+                 (values a b str)]
+                [else
+                 (define m (forward-match a (last-position)))
+                 (cond
+                   [m (loop m)]
+                   [else (values #f #f #f)])])]
+             [(<= b (last-position))
+              (loop b)]
+             [else
+              (values #f #f #f)])]
+          [else (values #f #f)])))
+    
+
+    ;; returns the start and end positions of the next token at or after
+    ;;   pos that matches any of the given list of closers, as well as
+    ;;   the string of the matching token itself and whether it
+    ;;   occurred immediately adjacent to pos, ignoring whitespace and comments
+    ;; find-next-close-paren : number (list string) boolean
+    ;;      -> (values (or #f number) (or #f number) (or #f string) boolean)
+    (define/private (find-next-close-paren pos closers [adj? #t])
+      (define next-pos (skip-whitespace pos 'forward #t))
+      (define ls (find-ls next-pos))
+      (cond
+        [ls
+         (define ls-start (lexer-state-start-pos ls))
+         (define tree (lexer-state-tokens ls))
+         (send tree search! (- next-pos ls-start))
+         (define start-pos (+ ls-start (send tree get-root-start-position)))
+         (define end-pos (+ ls-start (send tree get-root-end-position))) 
+         
+         #;(printf "~a |~a| |~a|~n" (list pos next-pos start-pos end-pos (send tree get-root-data)) closers (get-text start-pos end-pos))
+         
+         (cond
+           [(or (not (send tree get-root-data)) (<= end-pos pos))
+            (values #f #f #f #f)]    ;; didn't find /any/ token ending after pos
+           [(and (<= pos start-pos)
+                 (member (get-text start-pos end-pos) closers)) ; token at start-pos matches
+            (values start-pos end-pos (get-text start-pos end-pos) adj?)]
+           [else   ; skip ahead
+            (find-next-close-paren end-pos closers #f)])]
+        [else
+         (values #f #f #f #f)]))
+
+
+    ;; given end-pos, a position right after a closing parens,
+    ;; flash the matching open parens
+    (define/private (flash-from end-pos)
+      (let ((to-pos (backward-match end-pos 0)))
+        (when to-pos
+          (let ([ls (find-ls to-pos)])
+            (when ls
+              (let ([start-pos (lexer-state-start-pos ls)]
+                    [parens (lexer-state-parens ls)])
+                (when (and (send parens is-open-pos? (- to-pos start-pos))
+                           (send parens is-close-pos? (- end-pos 1 start-pos)))
+                  (flash-on to-pos (+ 1 to-pos)))))))))
+
+
+    (inherit insert delete flash-on on-default-char set-position get-character)
+    ;; See docs
+    ;; smart-skip : (or/c #f 'adjacent 'forward)
+    (define/public (insert-close-paren pos char flash? fixup? [smart-skip #f])
+      (define closers (map symbol->string (map cadr pairs)))
+      (define closer (get-close-paren pos
+                                      (if fixup? ;; Ensure preference for given character:
+                                          (cons (string char) (remove (string char) closers))
+                                          null)
+                                      #f))
+      (define insert-str (if closer closer (string char)))
+      (define (insert)
+        (for ([c (in-string insert-str)])
+          (on-default-char (new key-event% (key-code c))))
+        (+ pos (string-length insert-str)))
+      (define (skip p)
+        (set-position p)
+        p)
+      
+      (define end-pos
+        (cond
+          [smart-skip
+           (define-values (next-close-start next-close-end next-close-str next-close-adj?)
+             (find-next-close-paren pos closers))
+           (cond
+             [(eq? smart-skip 'adjacent)
+              (if (and next-close-start next-close-adj?
+                       (string=? insert-str next-close-str))
+                  (skip next-close-end)
+                  (insert))]
+             [(eq? smart-skip 'forward)
+              (define-values (outer-close-start outer-close-end outer-close-str)
+                (find-next-outer-paren pos closers))
+              (cond
+                [(and outer-close-start
+                      (or fixup? (string=? insert-str outer-close-str)))
+                 (skip outer-close-end)]
+                [(and next-close-start
+                      (or fixup? (string=? insert-str next-close-str)))
+                 (skip next-close-end)]
+                [else  (insert)])]
+             [else
+              (error 'insert-close-paren
+                     (format "invalid smart-skip option: ~a" smart-skip))])]
+          [else
+           (insert)]))
+      
+      (when (and flash? (not stopped?)) (flash-from end-pos)))
+    
+    ;; find-closer : exact-nonnegative-integer? -> (or/c #f string?)
+    ;; returns what the close paren should be at position pos to
+    ;; match whatever the opening paren is at the other end, unless
+    ;; the position is inside some other token or there is no opening
+    ;; paren, in which case it returns #f.
     (define/private (get-close-paren pos closers continue-after-non-paren?)
       (cond
-        ((null? closers) #f)
-        (else
-         (let* ((c (car closers))
-                (l (string-length c)))
-           (let ([ls (find-ls pos)])
-             (if ls
-                 (let ([start-pos (lexer-state-start-pos ls)])
-                   (insert c pos)
-                   (let ((cls (classify-position pos)))
-                     (if (eq? cls 'parenthesis)
-                         (let ((m (backward-match (+ l pos) start-pos)))
-                           (cond
-                             ((and m
-                                   (send (lexer-state-parens ls) is-open-pos? (- m start-pos))
-                                   (send (lexer-state-parens ls) is-close-pos? (- pos start-pos)))
-                              (delete pos (+ l pos))
-                              c)
-                             (else
-                              (delete pos (+ l pos))
-                              (get-close-paren pos (cdr closers) #t))))
-                         (begin
-                           (delete pos (+ l pos))
-                           (if continue-after-non-paren?
-                               (get-close-paren pos (cdr closers) #t)
-                               #f)))))
-                 c))))))
-    
-    (inherit insert delete flash-on on-default-char)
-    ;; See docs
-    (define/public (insert-close-paren pos char flash? fixup?)
-      (let ((closer
-             (begin
-               (begin-edit-sequence #f #f)
-               (get-close-paren pos 
-                                (if fixup? 
-                                    (let ([l (map symbol->string (map cadr pairs))])
-                                      ;; Ensure preference for given character:
-                                      (cons (string char) (remove (string char) l)))
-                                    null)
-                                ;; If the inserted preferred (i.e., given) paren doesn't parse
-                                ;;  as a paren, then don't try to change it.
-                                #f))))
-        (end-edit-sequence)
-        (let ((insert-str (if closer closer (string char))))
-          (for-each (lambda (c)
-                      (on-default-char (new key-event% (key-code c))))
-                    (string->list insert-str))
-          (when flash?
-            (unless stopped?
-              (let ((to-pos (backward-match (+ (string-length insert-str) pos) 0)))
-                (when to-pos
-                  (let ([ls (find-ls to-pos)])
-                    (when ls
-                      (let ([start-pos (lexer-state-start-pos ls)]
-                            [parens (lexer-state-parens ls)])
-                        (when (and (send parens is-open-pos? (- to-pos start-pos))
-                                   (send parens is-close-pos? (- pos start-pos)))
-                          (flash-on to-pos (+ 1 to-pos)))))))))))))
+        [(null? closers) #f]
+        [else
+         (define c (car closers))
+         (define l (string-length c))
+         (define ls (find-ls pos))
+         (cond
+           [ls
+            (define start-pos (lexer-state-start-pos ls))
+            (insert c pos)
+            (define cls (classify-position pos))
+            (cond
+              [(eq? cls 'parenthesis)
+               (define m (backward-match (+ l pos) start-pos))
+               (cond
+                 [(and m
+                       (send (lexer-state-parens ls) is-open-pos? (- m start-pos))
+                       (send (lexer-state-parens ls) is-close-pos? (- pos start-pos)))
+                  (delete pos (+ l pos))
+                  c]
+                 [else
+                  (delete pos (+ l pos))
+                  (get-close-paren pos (cdr closers) #t)])]
+              [else
+               (delete pos (+ l pos))
+               (if continue-after-non-paren?
+                   (get-close-paren pos (cdr closers) #t)
+                   #f)])]
+           [else c])]))
+
     
     (define/public (debug-printout)
       (for-each 
@@ -1010,6 +1140,9 @@ added get-regions
     
     (define/augment (after-edit-sequence)
       ;;(printf "(after-edit-sequence)\n")
+      (when continue-after-edit-sequence?
+        (set! continue-after-edit-sequence? #f)
+        (queue-callback (λ () (colorer-callback)) #f))
       (when (has-focus?)
         (match-parens))
       (inner (void) after-edit-sequence))
@@ -1056,32 +1189,40 @@ added get-regions
 
 (define parenthesis-color-table #f)
 (define (get-parenthesis-colors-table)
+  (define (reverse-vec v) (list->vector (reverse (vector->list v))))
   (unless parenthesis-color-table
     (set! parenthesis-color-table
           (list
            (list 'shades-of-gray  
                  (string-constant paren-color-shades-of-gray)
-                 (between 180 180 180
-                          220 220 220))
+                 (reverse-vec
+                  (between .2 0 0 0
+                           .2 0 0 0))
+                 'high)
            (list 'shades-of-blue
                  (string-constant paren-color-shades-of-blue)
-                 (between 204 204 255
-                          153 153 255))
+                 (between .4 153 153 255
+                          .4 153 153 255)
+                 'high)
            (list 'spring
                  (string-constant paren-color-spring)
-                 (between 255 255 153
-                          204 255 153))
+                 (between 1 255 255 153
+                          1 204 255 153)
+                 'low)
            (list 'fall
                  (string-constant paren-color-fall)
-                 (between 255 204 153
-                          204 153 102))
+                 (between 1 255 204 153
+                          1 204 153 102)
+                 'low)
            (list 'winter
                  (string-constant paren-color-winter)
-                 (between 204 205 255
-                          238 238 255)))))
+                 (between 1 204 205 255
+                          1 238 238 255)
+                 'low))))
   (cons (list 'basic-grey
               (string-constant paren-color-basic-grey)
-              (vector (preferences:get 'framework:paren-match-color)))
+              (vector (preferences:get 'framework:paren-match-color))
+              'high)
         parenthesis-color-table))
 
 (define (get-parenthesis-colors) 
@@ -1090,16 +1231,23 @@ added get-regions
                     (car (get-parenthesis-colors-table)))])
     (caddr choice)))
 
-(define (between start-r start-g start-b end-r end-g end-b)
+(define (get-parenthesis-priority) 
+  (let ([choice (or (assoc (preferences:get 'framework:paren-color-scheme)
+                           (get-parenthesis-colors-table))
+                    (car (get-parenthesis-colors-table)))])
+    (list-ref choice 3)))
+
+(define (between start-a start-r start-g start-b end-a end-r end-g end-b)
   (let ([size 4])
     (build-vector
      4 
      (lambda (x) 
-       (let ([between (λ (start end) (floor (+ start (* (- end start) (/ x (- size 1))))))])
-         (make-object color% 
-           (between start-r end-r)
-           (between start-g end-g)
-           (between start-b end-b)))))))
+       (define (between start end) (+ start (* (- end start) (/ x (- size 1)))))
+       (make-object color% 
+         (floor (between start-r end-r))
+         (floor (between start-g end-g))
+         (floor (between start-b end-b))
+         (between start-a end-a))))))
 
 (define -text% (text-mixin text:keymap%))
 

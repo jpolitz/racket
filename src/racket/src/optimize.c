@@ -1,6 +1,6 @@
 /*
   Racket
-  Copyright (c) 2004-2012 PLT Scheme Inc.
+  Copyright (c) 2004-2013 PLT Design Inc.
   Copyright (c) 1995-2001 Matthew Flatt
 
     This library is free software; you can redistribute it and/or
@@ -1540,11 +1540,11 @@ Scheme_Object *optimize_for_inline(Optimize_Info *info, Scheme_Object *le, int a
 	  scheme_log(info->logger,
 		     SCHEME_LOG_DEBUG,
 		     0,
-		     "inlining: involving: %s%s size: %d threshold: %d",
+		     "inlining %s size: %d threshold: %d#<separator>%s",
 		     scheme_write_to_string(data->name ? data->name : scheme_false, NULL),
-		     scheme_optimize_context_to_string(info->context),
 		     sz,
-		     threshold);
+		     threshold,
+		     scheme_optimize_context_to_string(info->context));
           le = apply_inlined(le, data, sub_info, argc, app, app2, app3, context,
                              nested_count, orig_le, prev, prev_offset);
           if (nested_count)
@@ -1555,11 +1555,11 @@ Scheme_Object *optimize_for_inline(Optimize_Info *info, Scheme_Object *le, int a
 	  scheme_log(info->logger,
 		     SCHEME_LOG_DEBUG,
 		     0,
-		     "no inlining: involving: %s%s size: %d threshold: %d",
+		     "no-inlining %s size: %d threshold: %d#<separator>%s",
 		     scheme_write_to_string(data->name ? data->name : scheme_false, NULL),
-		     scheme_optimize_context_to_string(info->context),
 		     sz,
-		     threshold);
+		     threshold,
+		     scheme_optimize_context_to_string(info->context));
         }
       } else {
         LOG_INLINE(fprintf(stderr, "No fuel %s %d[%d]>%d@%d %d\n", scheme_write_to_string(data->name ? data->name : scheme_false, NULL),
@@ -1568,11 +1568,11 @@ Scheme_Object *optimize_for_inline(Optimize_Info *info, Scheme_Object *le, int a
 	scheme_log(info->logger,
 		   SCHEME_LOG_DEBUG,
 		   0,
-		   "no inlining, out of fuel: involving: %s%s size: %d threshold: %d",
+		   "out-of-fuel %s size: %d threshold: %d#<separator>%s",
 		   scheme_write_to_string(data->name ? data->name : scheme_false, NULL),
-		   scheme_optimize_context_to_string(info->context),
 		   sz,
-		   threshold);
+		   threshold,
+		   scheme_optimize_context_to_string(info->context));
       }
     } else {
       /* Issue warning below */
@@ -1890,6 +1890,19 @@ static int wants_local_type_arguments(Scheme_Object *rator, int argpos)
       if (flags & SCHEME_PRIM_WANTS_FLONUM_THIRD)
         return SCHEME_LOCAL_TYPE_FLONUM;
     }
+
+#ifdef MZ_LONG_DOUBLE
+    if (argpos == 0) {
+      if (flags & SCHEME_PRIM_WANTS_EXTFLONUM_FIRST)
+        return SCHEME_LOCAL_TYPE_EXTFLONUM;
+    } else if (argpos == 1) {
+      if (flags & SCHEME_PRIM_WANTS_EXTFLONUM_SECOND)
+        return SCHEME_LOCAL_TYPE_EXTFLONUM;
+    } else if (argpos == 2) {
+      if (flags & SCHEME_PRIM_WANTS_EXTFLONUM_THIRD)
+        return SCHEME_LOCAL_TYPE_EXTFLONUM;
+    }
+#endif
   }
 
   return 0;
@@ -1945,6 +1958,10 @@ int scheme_expr_produces_local_type(Scheme_Object *expr)
     default:
       if (SCHEME_FLOATP(expr))
         return SCHEME_LOCAL_TYPE_FLONUM;
+#ifdef MZ_LONG_DOUBLE
+      if (SCHEME_LONG_DBLP(expr))
+        return SCHEME_LOCAL_TYPE_EXTFLONUM;
+#endif
       if (SCHEME_INTP(expr) 
           && IN_FIXNUM_RANGE_ON_ALL_PLATFORMS(SCHEME_INT_VAL(expr)))
         return SCHEME_LOCAL_TYPE_FIXNUM;
@@ -2101,10 +2118,47 @@ static Scheme_Object *optimize_application(Scheme_Object *o, Optimize_Info *info
   return finish_optimize_application(app, info, context, rator_flags);
 }
 
+static int appn_flags(Scheme_Object *rator, Optimize_Info *info)
+{
+  if (SAME_TYPE(SCHEME_TYPE(rator), scheme_compiled_toplevel_type)) {
+    if (info->top_level_consts) {
+      int pos;
+      pos = SCHEME_TOPLEVEL_POS(rator);
+      rator = scheme_hash_get(info->top_level_consts, scheme_make_integer(pos));
+      rator = no_potential_size(rator);
+      if (!rator) return 0;
+      if (SAME_TYPE(SCHEME_TYPE(rator), scheme_proc_shape_type)) {
+        return APPN_FLAG_SFS_TAIL;
+      } else if (SAME_TYPE(SCHEME_TYPE(rator), scheme_struct_proc_shape_type)) {
+        int ps = SCHEME_PROC_SHAPE_MODE(rator);
+        if ((ps == STRUCT_PROC_SHAPE_PRED)
+            || (ps == STRUCT_PROC_SHAPE_GETTER)
+            || (ps == STRUCT_PROC_SHAPE_SETTER))
+          return (APPN_FLAG_IMMED | APPN_FLAG_SFS_TAIL);
+        return 0;
+      }
+    }
+  }
+
+  if (SCHEME_PRIMP(rator)) {
+    int opt = (SCHEME_PRIM_PROC_FLAGS(rator) & SCHEME_PRIM_OPT_MASK);
+    if (opt >= SCHEME_PRIM_OPT_IMMEDIATE)
+      return (APPN_FLAG_IMMED | APPN_FLAG_SFS_TAIL);
+    return 0;
+  }
+
+  if (SAME_TYPE(scheme_compiled_unclosed_procedure_type, SCHEME_TYPE(rator))
+      || SAME_TYPE(scheme_case_lambda_sequence_type, SCHEME_TYPE(rator))
+      || SAME_TYPE(scheme_noninline_proc_type, SCHEME_TYPE(rator)))
+    return APPN_FLAG_SFS_TAIL;
+  
+  return 0;
+}
+
 static Scheme_Object *finish_optimize_application(Scheme_App_Rec *app, Optimize_Info *info, int context, int rator_flags)
 {
   Scheme_Object *le;
-  int all_vals = 1, i;
+  int all_vals = 1, i, flags;
 
   for (i = app->num_args; i--; ) {
     if (SCHEME_TYPE(app->args[i+1]) < _scheme_compiled_values_types_)
@@ -2132,6 +2186,9 @@ static Scheme_Object *finish_optimize_application(Scheme_App_Rec *app, Optimize_
     return scheme_null;
 
   register_local_argument_types(app, NULL, NULL, info);
+
+  flags = appn_flags(app->args[0], info);
+  SCHEME_APPN_FLAGS(app) |= flags;
 
   return (Scheme_Object *)app;
 }
@@ -2242,6 +2299,7 @@ static Scheme_Object *optimize_application2(Scheme_Object *o, Optimize_Info *inf
 static Scheme_Object *finish_optimize_application2(Scheme_App2_Rec *app, Optimize_Info *info, int context, int rator_flags)
 {
   Scheme_Object *le;
+  int flags;
 
   info->size += 1;
 
@@ -2393,6 +2451,9 @@ static Scheme_Object *finish_optimize_application2(Scheme_App2_Rec *app, Optimiz
 
   register_local_argument_types(NULL, app, NULL, info);
 
+  flags = appn_flags(app->rator, info);
+  SCHEME_APPN_FLAGS(app) |= flags;
+
   return (Scheme_Object *)app;
 }
 
@@ -2400,7 +2461,7 @@ static Scheme_Object *optimize_application3(Scheme_Object *o, Optimize_Info *inf
 {
   Scheme_App3_Rec *app;
   Scheme_Object *le;
-  int rator_flags = 0, sub_context = 0, ty;
+  int rator_flags = 0, sub_context = 0, ty, flags;
 
   app = (Scheme_App3_Rec *)o;
 
@@ -2448,6 +2509,9 @@ static Scheme_Object *optimize_application3(Scheme_Object *o, Optimize_Info *inf
   /* Check for (apply ... (list ...)) after some optimizations: */
   le = direct_apply((Scheme_Object *)app, app->rator, app->rand2, info);
   if (le) return finish_optimize_app(le, info, context, rator_flags);
+
+  flags = appn_flags(app->rator, info);
+  SCHEME_APPN_FLAGS(app) |= flags;
 
   return finish_optimize_application3(app, info, context, rator_flags);
 }
@@ -2606,6 +2670,32 @@ static Scheme_Object *finish_optimize_application3(Scheme_App3_Rec *app, Optimiz
       if (SCHEME_FLOATP(app->rand2) && (SCHEME_FLOAT_VAL(app->rand2) == 1.0))
         return scheme_make_double(0.0);
     }
+#ifdef MZ_LONG_DOUBLE
+    z1 = (SCHEME_LONG_DBLP(app->rand1) && long_double_is_zero(SCHEME_LONG_DBL_VAL(app->rand1)));
+    z2 = (SCHEME_LONG_DBLP(app->rand2) && long_double_is_zero(SCHEME_LONG_DBL_VAL(app->rand2)));
+
+    if (IS_NAMED_PRIM(app->rator, "unsafe-extfl+")) {
+      if (z1)
+        return app->rand2;
+      else if (z2)
+        return app->rand1;
+    } else if (IS_NAMED_PRIM(app->rator, "unsafe-extfl-")) {
+      if (z2)
+        return app->rand1;
+    } else if (IS_NAMED_PRIM(app->rator, "unsafe-extfl*")) {
+      if (SCHEME_LONG_DBLP(app->rand1) && long_double_is_1(SCHEME_LONG_DBL_VAL(app->rand1)))
+        return app->rand2;
+      if (SCHEME_LONG_DBLP(app->rand2) && long_double_is_1(SCHEME_LONG_DBL_VAL(app->rand2)))
+        return app->rand1;
+    } else if (IS_NAMED_PRIM(app->rator, "unsafe-extfl/")) {
+      if (SCHEME_LONG_DBLP(app->rand2) && long_double_is_1(SCHEME_LONG_DBL_VAL(app->rand2)))
+        return app->rand1;
+    } else if (IS_NAMED_PRIM(app->rator, "unsafe-extflremainder")
+               || IS_NAMED_PRIM(app->rator, "unsafe-extflmodulo")) {
+      if (SCHEME_LONG_DBLP(app->rand2) && long_double_is_1(SCHEME_LONG_DBL_VAL(app->rand2)))
+        return scheme_make_long_double(get_long_double_zero());
+    }
+#endif
   }
 
   register_local_argument_types(NULL, NULL, app, info);
@@ -3559,6 +3649,31 @@ int scheme_compiled_propagate_ok(Scheme_Object *value, Optimize_Info *info)
     sz = closure_body_size((Scheme_Closure_Data *)value, 1, info, NULL);
     if ((sz >= 0) && (sz <= MAX_PROC_INLINE_SIZE))
       return 1;
+   else {
+     Scheme_Closure_Data *data = (Scheme_Closure_Data *)value;
+     if (sz < 0)
+       scheme_log(info->logger,
+		  SCHEME_LOG_DEBUG,
+		  0,
+		  /* contains non-copyable body elements that prevent inlining */
+		  "non-copyable %s size: %d threshold: %d#<separator>%s",
+		  scheme_write_to_string(data->name ? data->name : scheme_false, NULL),
+		  sz,
+		  0, /* no sensible threshold here */
+		  scheme_optimize_context_to_string(info->context));
+     else
+       scheme_log(info->logger,
+		  SCHEME_LOG_DEBUG,
+		  0,
+		  /* too large to be an inlining candidate */
+		  "too-large %s size: %d threshold: %d#<separator>%s",
+		  scheme_write_to_string(data->name ? data->name : scheme_false, NULL),
+		  sz,
+		  0, /* no sensible threshold here */
+		  scheme_optimize_context_to_string(info->context));
+     return 0;
+   }
+
   }
 
   if (SAME_TYPE(scheme_case_lambda_sequence_type, SCHEME_TYPE(value))) {
@@ -5144,6 +5259,14 @@ module_optimize(Scheme_Object *data, Optimize_Info *info, int context)
     return (Scheme_Object *)m;
   }
 
+  if (m->phaseless) {
+    scheme_log(info->logger,
+               SCHEME_LOG_DEBUG,
+               0,
+               "compilation of cross-phase persistent module: %D",
+               m->modname);
+  }
+
   old_context = info->context;
   info->context = (Scheme_Object *)m;
 
@@ -5603,8 +5726,6 @@ top_level_require_optimize(Scheme_Object *data, Optimize_Info *info, int context
   return data;
 }
 
-
-
 /*========================================================================*/
 /*                            expressions                                 */
 /*========================================================================*/
@@ -5822,6 +5943,8 @@ Scheme_Object *optimize_clone(int dup_ok, Scheme_Object *expr, Optimize_Info *in
       if (!expr) return NULL;
       app2->rand = expr;
 
+      SCHEME_APPN_FLAGS(app2) |= (SCHEME_APPN_FLAGS(app) & APPN_FLAG_MASK);
+
       return (Scheme_Object *)app2;
     }
   case scheme_application_type:
@@ -5836,6 +5959,8 @@ Scheme_Object *optimize_clone(int dup_ok, Scheme_Object *expr, Optimize_Info *in
 	if (!expr) return NULL;
 	app2->args[i] = expr;
       }
+
+      SCHEME_APPN_FLAGS(app2) |= (SCHEME_APPN_FLAGS(app) & APPN_FLAG_MASK);
 
       return (Scheme_Object *)app2;
     }
@@ -5857,6 +5982,8 @@ Scheme_Object *optimize_clone(int dup_ok, Scheme_Object *expr, Optimize_Info *in
       expr = optimize_clone(dup_ok, app->rand2, info, delta, closure_depth);
       if (!expr) return NULL;
       app2->rand2 = expr;
+
+      SCHEME_APPN_FLAGS(app2) |= (SCHEME_APPN_FLAGS(app) & APPN_FLAG_MASK);
 
       return (Scheme_Object *)app2;
     }
@@ -6693,7 +6820,7 @@ static Scheme_Object *do_optimize_info_lookup(Optimize_Info *info, int pos, int 
 	  n = scheme_make_local(scheme_local_type, pos + delta, 0);
 	} else if (SAME_TYPE(SCHEME_TYPE(n), scheme_once_used_type)) {
           /* Need to adjust delta: */
-          delta = optimize_info_get_shift(info, pos);
+          delta += optimize_info_get_shift(info, pos);
           ((Scheme_Once_Used *)n)->delta += delta;
           if (cross_lambda) ((Scheme_Once_Used *)n)->cross_lambda = 1;
         }

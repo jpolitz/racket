@@ -424,6 +424,106 @@
     (test (and (redex-match L -b 100) #t) #t)
     (test (redex-match L -b 3) #f))
 
+  ;; The following two tests make sure that `define-union-language`
+  ;; works with extended languages
+  (let ()
+    (define-language LBase
+      (e (+ e e)
+         number))
+
+    (define-extended-language L1 LBase
+      (e ....
+         (- e e)))
+
+    (define-extended-language L2 LBase
+      (e ....
+         (* e e)))
+
+    (define-union-language LMerge (one. L1) (two. L2))
+
+    #|
+    The error that used to be raised:
+    define-union-language: two sublanguages both contribute the non-terminal: one.e in:
+      (one. L1)
+      (one. L1)
+    |#
+
+
+    (test (and (redex-match LMerge one.e (term (- 0 0))) #t) #t)
+    (test (and (redex-match LMerge two.e (term (* 0 0))) #t) #t)
+
+    (define-union-language LMergeUntagged L1 L2)
+
+    (for ([t (list (term 1) (term (* 1 1)) (term (+ 1 1)) (term (- 1 1)))])
+       (test (redex-match? LMergeUntagged e t) #t)))
+  
+  ;; test that define-union-language properly merges non-terminals
+  (let () 
+    (define-language LBase
+      (e (+ e e) number))
+    
+    (define-extended-language L1 LBase
+      (e ....  (- e e)))
+    
+    (define-extended-language L2 LBase
+      (e ....  (* e e)))
+    
+    ;; Untagged union of two languages that define the same nonterminal
+    (define-union-language LMergeUntagged L1 L2)
+    
+    ;; Tagged merge of two extended languages that define the same
+    ;; nonterminal
+    (define-union-language LMergeTagged (f. L1) (d. L2))
+    
+    (test (redex-match? LMergeUntagged e (term 1)) #t)
+    (test (redex-match? LMergeUntagged e (term (* 1 1))) #t)
+    (test (redex-match? LMergeUntagged e (term (+ 1 1))) #t)
+    (test (redex-match? LMergeUntagged e (term (- 1 1))) #t)
+    
+    (test (redex-match? LMergeTagged f.e 1) #t)
+    (test (redex-match? LMergeTagged d.e 1) #t)
+    
+    (test (redex-match? LMergeTagged f.e (term (+ 1 1))) #t)
+    (test (redex-match? LMergeTagged f.e (term (- 1 1))) #t)
+    (test (redex-match? LMergeTagged f.e (term (* 1 1))) #f)
+    
+    (test (redex-match? LMergeTagged d.e (term (+ 1 1))) #t)
+    (test (redex-match? LMergeTagged d.e (term (* 1 1))) #t)
+    (test (redex-match? LMergeTagged d.e (term (- 1 1))) #f))
+  
+  (let ()
+    (define-language L1 (e f ::= 1))
+    (define-language L2 (e g ::= 2))
+    (define-union-language Lc L1 L2)
+    (test (redex-match? Lc e 1) #t)
+    (test (redex-match? Lc e 2) #t)
+    (test (redex-match? Lc f 1) #t)
+    (test (redex-match? Lc f 2) #t)
+    (test (redex-match? Lc g 1) #t)
+    (test (redex-match? Lc g 2) #t))
+  
+  (let ()
+    (define-language UT
+      (e (e e)
+         (λ (x) e)
+         x))
+    
+    (define-language WT
+      (e (e e)
+         (λ (x t) e)
+         x)
+      (t (→ t t)
+         num))
+    
+    (define-extended-language UT+ UT
+      (e ....
+         (foo e e)))
+    
+    (define-union-language B (ut. UT+) (wt. WT))
+    
+    (test (and (redex-match B ut.e (term (foo x x))) #t) #t)
+    (test (redex-match B wt.e (term (foo x x))) #f))
+
   (let ()
     (test (redex-match empty-language number 'a) #f)
     (test (redex-match empty-language (in-hole hole number) 'a) #f))
@@ -1034,6 +1134,21 @@
           '(2 1)))
   
   (let ()
+    (define-metafunction empty-language
+      [(same any_1 any_1) #t]
+      [(same any_1 any_2) #f])
+    
+    (define-metafunction empty-language
+      m : any_1 any_2 -> any_3
+      #:pre (same any_1 any_2)
+      [(m any_x any_y) any_x])
+    
+    (test (term (m 1 1)) 1)
+    (test (with-handlers ((exn:fail:redex? exn-message))
+            (term (m 1 2)))
+          #rx"is not in my domain"))
+  
+  (let ()
     (define-language L
       (n z (s n)))
     
@@ -1236,6 +1351,49 @@
     
     (test (term (R (xx) (xx))) #t)
     (test (term (R (()) ())) #f))
+  
+  (let ()
+    
+    (define-relation empty-language
+      [(a number_1)
+       (b number_1)]
+      [(a 2)])
+    
+    (define-relation empty-language
+      [(b 1)]
+      [(b 2)])
+    
+    (test (term (a 1)) #t)
+    (test (term (a 2)) #t)
+    (test (term (a 3)) #f)
+    (test (term (b 1)) #t)
+    (test (term (b 2)) #t)
+    (test (term (b 3)) #f))
+  
+  (let ()
+    (define-relation empty-language
+      [(a any)])
+    (define-relation empty-language
+      [(b any)])
+    (define-relation empty-language
+      [(c any) (a (b any))])
+    
+    (define-metafunction empty-language
+      [(f any)
+       (c any)])
+    
+    (define-judgment-form empty-language
+      #:mode (J I O)
+      [(J any_1 (a any_1))])
+    
+    (test (term (a 1)) #t)
+    (test (term (b 2)) #t)
+    (test (term (c 3)) #t)
+    (test (term (c (b (a x)))) #t)
+    (test (term (f q)) #t)
+    (test (judgment-holds (J Z #t)) #t)
+    (test (judgment-holds (J Z Z)) #f)
+    )
 
   
   (exec-syntax-error-tests "syn-err-tests/relation-definition.rktd")
@@ -2299,7 +2457,9 @@
         [(different any_a any_a) #f]
         [(different any_a any_b) #t])
       (test (judgment-holds (R 1 2)) #t)
-      (test (judgment-holds (R 1 1)) #f))
+      (test (judgment-holds (R 1 1)) #f)
+      (test (term (R 1 2)) #t)
+      (test (term (R 1 1)) #f))
     
     (let ()
       (define-judgment-form empty-language
@@ -2441,6 +2601,79 @@
                        '(J () z)
 		       #f
                        '()))))))))
+    (let ()
+      (define-language U
+        (n Z (S n)))
+      
+      (define-judgment-form U
+        #:mode (jsum I I I)
+        [(jsum n Z n)]
+        [(jsum n_1 (S n_2) (S n_3))
+         (jsum n_1 n_2 n_3)])
+      
+      (define-relation U
+        sum ⊆ n x n x n
+        [(sum n Z n)]
+        [(sum n_1 (S n_2) (S n_3))
+         (sum n_1 n_2 n_3)])
+      
+      (define-relation U
+        [(rjsum n_1 n_2 n_3)
+         (jjsum n_1 n_2 n_3)])
+      
+      (define-judgment-form U
+        #:mode (jjsum I I I)
+        [(jjsum n_1 n_2 n_3)
+         (rrsum n_1 n_2 n_3)])
+      
+      (define-relation U
+        [(rrsum n_1 n_2 n_3)
+         (jsum n_1 n_2 n_3)])
+      
+      (test (term (sum Z Z Z)) #t)
+      (test (term (sum Z Z (S Z))) #f)
+      (test (term (sum (S Z) (S Z) (S (S Z)))) #t)
+      (test (term (sum (S Z) (S (S Z)) (S (S Z)))) #f)
+      (test (term (sum (S (S Z)) (S (S Z)) (S (S (S (S Z)))))) #t)
+      (test (term (sum (S (S Z)) (S (S Z)) (S (S (S Z))))) #f)
+      (test (term (jsum Z Z Z)) #t)
+      (test (term (jsum Z Z (S Z))) #f)
+      (test (term (jsum (S Z) (S Z) (S (S Z)))) #t)
+      (test (term (jsum (S Z) (S (S Z)) (S (S Z)))) #f)
+      (test (term (jsum (S (S Z)) (S (S Z)) (S (S (S (S Z)))))) #t)
+      (test (term (jsum (S (S Z)) (S (S Z)) (S (S (S Z))))) #f)
+      (test (term (rjsum Z Z Z)) #t)
+      (test (term (rjsum Z Z (S Z))) #f)
+      (test (term (rjsum (S Z) (S Z) (S (S Z)))) #t)
+      (test (term (rjsum (S Z) (S (S Z)) (S (S Z)))) #f)
+      (test (term (rjsum (S (S Z)) (S (S Z)) (S (S (S (S Z)))))) #t)
+      (test (term (rjsum (S (S Z)) (S (S Z)) (S (S (S Z))))) #f))
+    
+    (let ()
+      (define-judgment-form empty-language
+        #:mode (Q I O)
+        [(Q number_1 ,(+ (term number_1) (term number_1)))]
+        [(Q (number_1 number_2) number_3)
+         (Q ,(+ (term number_1) (term number_2)) number_3)])
+      
+      (test (judgment-holds (Q 1 2))
+                  #t)
+      (test (judgment-holds (Q 1 3))
+                  #f)
+      (test (judgment-holds (Q 1 number_1) number_1)
+                  '(2))
+      (test (judgment-holds (Q 7 14))
+                  #t)
+      (test (judgment-holds (Q 7 symbol))
+                  #f)
+      (test (judgment-holds (Q 7 number_1) number_1)
+                  '(14))
+      (test (judgment-holds (Q (1 2) 6))
+                  #t)
+      (test (judgment-holds (Q (1 3) 6))
+                  #f)
+      (test (judgment-holds (Q (3 4) number_1) number_1)
+                  '(14)))
 
     
     (parameterize ([current-namespace (make-base-namespace)])
@@ -2922,6 +3155,9 @@
         (term (f 1))
         (test (sorted-counts c) '(1 0 0))))
     
+    ;; coverage for define-relation not working since
+    ;; it was changed to compile to judgment-form
+    #;
     (let ([c (make-coverage R)])
       (parameterize ([relation-coverage (list c)])
         (term (R 2))

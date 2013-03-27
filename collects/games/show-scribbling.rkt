@@ -1,22 +1,21 @@
-#lang scheme/base
+#lang racket/base
 
 (require setup/xref
          scribble/xref
-         scribble/basic
-         scheme/promise
+         scribble/tag
          net/url
          net/sendurl)
 
 (provide show-scribbling)
 
 (define (show-scribbling mod-path tag)
-  (let ([xref (delay (load-collections-xref))])
-    (lambda ()
-      (let-values ([(path anchor)
-                    (xref-tag->path+anchor 
-                     (force xref)
-                     (list 'part (list (module-path-prefix->string mod-path) tag)))])
-        (if path
-            (let ([u (path->url path)])
-              (send-url (url->string u)))
-            (error 'show-scribbling "cannot find docs for: ~.s ~.s" mod-path tag))))))
+  (define xref (load-collections-xref))
+  (λ ()
+    (define-values (path anchor)
+      (xref-tag->path+anchor 
+       xref
+       (make-section-tag tag #:doc mod-path)))
+    (if path
+        (let ([u (path->url path)])
+          (send-url (url->string u)))
+        (error 'show-scribbling "cannot find docs for: ~.s ~.s" mod-path tag))))

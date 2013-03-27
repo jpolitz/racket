@@ -36,7 +36,11 @@
           make-ThreadCellTop
           make-Ephemeron
           make-CustodianBox
-          make-HeterogenousVector
+          make-HeterogeneousVector
+          make-Continuation-Mark-Keyof
+          make-Continuation-Mark-KeyTop
+          make-Prompt-Tagof
+          make-Prompt-TagTop
           make-ListDots))
 
 ;Section 9.2
@@ -246,7 +250,7 @@
 [boolean=? (B B . -> . B)]
 [symbol=? (Sym Sym . -> . B)]
 [false? (make-pred-ty (-val #f))]
-
+[xor (-> Univ Univ Univ)]
 
 
 
@@ -394,10 +398,10 @@
 [map (-polydots (c a b)
                 (cl->*
                  (-> (-> a c) (-pair a (-lst a)) (-pair c (-lst c)))
-                ((list
-                  ((list a) (b b) . ->... . c)
-                  (-lst a))
-                 ((-lst b) b) . ->... .(-lst c))))]
+                 ((list
+                   ((list a) (b b) . ->... . c)
+                   (-lst a))
+                  ((-lst b) b) . ->... .(-lst c))))]
 [for-each (-polydots (c a b) ((list ((list a) (b b) . ->... . Univ) (-lst a))
                               ((-lst b) b) . ->... . -Void))]
 #;[fold-left (-polydots (c a b) ((list ((list c a) (b b) . ->... . c) c (-lst a))
@@ -414,7 +418,7 @@
                      [((a b c . -> . c) c (-lst a) (-lst b)) c]
                      [((a b c d . -> . d) d (-lst a) (-lst b) (-lst d)) d]))]
 [filter (-poly (a b) (cl->*
-                      ((asym-pred a -Boolean (-FS (-filter b 0) -top))
+                      ((asym-pred a Univ (-FS (-filter b 0) -top))
                        (-lst a)
                        . -> .
                        (-lst b))
@@ -469,11 +473,10 @@
 ;thread-suspend-evt
 
 ;Section 10.1.4
-[thread-send (-poly (a)
- (cl->*
-  (-> -Thread Univ -Void)
-  (-> -Thread Univ (-val #f) (-opt -Void))
-  (-> -Thread Univ (-> a) (Un -Void a))))]
+[thread-send
+ (-poly (a) (cl->* (-> -Thread Univ -Void)
+                   (-> -Thread Univ (-val #f) (-opt -Void))
+                   (-> -Thread Univ (-> a) (Un -Void a))))]
 [thread-receive (-> Univ)]
 [thread-try-receive (-> Univ)]
 [thread-rewind-receive (-> (-lst Univ) -Void)]
@@ -548,9 +551,10 @@
 [char-whitespace? (-> -Char B)]
 [char-blank? (-> -Char B)]
 [char-iso-control? (-> -Char B)]
-[char-general-category (-> -Char (apply Un (map -val
-  '(lu ll lt lm lo mn mc me nd nl no ps pe pi pf pd
-    pc po sc sm sk so zs zp zl cc cf cs co cn))))]
+[char-general-category
+ (-> -Char (apply Un (map -val
+                          '(lu ll lt lm lo mn mc me nd nl no ps pe pi pf pd
+                            pc po sc sm sk so zs zp zl cc cf cs co cn))))]
 [make-known-char-range-list (-> (-lst (-Tuple (list -PosInt -PosInt B))))]
 
 [char-upcase (-> -Char -Char)]
@@ -592,10 +596,6 @@
                        (make-ListDots a 'a)
                        (-values (list (-pair b (-val '())) -Nat -Nat -Nat)))))]
 
-[call/cc (-poly (a b) (((a . -> . (Un)) . -> . b) . -> . (Un a b)))]
-[call/ec (-poly (a b) (((a . -> . (Un)) . -> . b) . -> . (Un a b)))]
-[call-with-current-continuation (-poly (a b) (((a . -> . (Un)) . -> . b) . -> . (Un a b)))]
-[call-with-escape-continuation (-poly (a b) (((a . -> . (Un)) . -> . b) . -> . (Un a b)))]
 
 [struct->vector (Univ . -> . (-vec Univ))]
 [unsafe-struct-ref top-func]
@@ -823,7 +823,8 @@
 
 
 
-[build-path (cl->*
+[build-path
+ (cl->*
   ((list -Pathlike*) -Pathlike* . ->* . -Path)
   ((list -SomeSystemPathlike*) -SomeSystemPathlike* . ->* . -SomeSystemPath))]
 [build-path/convention-type
@@ -895,9 +896,9 @@
 [make-weak-hash (-poly (a b) (->opt [(-lst (-pair a b))] (-HT a b)))]
 [make-weak-hasheq (-poly (a b) (->opt [(-lst (-pair a b))] (-HT a b)))]
 [make-weak-hasheqv (-poly (a b) (->opt [(-lst (-pair a b))] (-HT a b)))]
-[make-immutable-hash (-poly (a b) (-> (-lst (-pair a b)) (-HT a b)))]
-[make-immutable-hasheq (-poly (a b) (-> (-lst (-pair a b)) (-HT a b)))]
-[make-immutable-hasheqv (-poly (a b) (-> (-lst (-pair a b)) (-HT a b)))]
+[make-immutable-hash (-poly (a b) (->opt [(-lst (-pair a b))] (-HT a b)))]
+[make-immutable-hasheq (-poly (a b) (->opt [(-lst (-pair a b))] (-HT a b)))]
+[make-immutable-hasheqv (-poly (a b) (->opt [(-lst (-pair a b))] (-HT a b)))]
 
 [hash-set (-poly (a b) ((-HT a b) a b . -> . (-HT a b)))]
 [hash-set! (-poly (a b) ((-HT a b) a b . -> . -Void))]
@@ -970,7 +971,12 @@
 [sequence-for-each (-poly (a) ((a . -> . Univ) (-seq a) . -> . -Void))]
 [sequence-fold (-poly (a b) ((b a . -> . b) b (-seq a) . -> . b))]
 [sequence-count (-poly (a) ((a . -> . Univ) (-seq a) . -> . -Nat))]
-[sequence-filter (-poly (a) ((a . -> . Univ) (-seq a) . -> . (-seq a)))]
+[sequence-filter (-poly (a b) (cl->*
+                                ((asym-pred a Univ (-FS (-filter b 0) -top))
+                                 (-seq a)
+                                 . -> .
+                                 (-seq b))
+                                ((a . -> . Univ) (-lst a) . -> . (-seq a))))]
 [sequence-add-between (-poly (a) ((-seq a) a . -> . (-seq a)))]
 
 ;Section 3.16 (Sets)
@@ -980,6 +986,8 @@
 [set-empty? (-poly (e) (-> (-set e) B))]
 [set-count (-poly (e) (-> (-set e) -Index))]
 [set-member? (-poly (e) (-> (-set e) e B))]
+[set-first (-poly (e) (-> (-set e) e))]
+[set-rest (-poly (e) (-> (-set e) (-set e)))]
 [set-add (-poly (e) (-> (-set e) e (-set e)))]
 [set-remove (-poly (e) (-> (-set e) e (-set e)))]
 
@@ -994,17 +1002,18 @@
 [proper-subset? (-poly (e) (-> (-set e) (-set e) B))]
 [set-map (-poly (e b) (-> (-set e) (-> e b) (-lst b)))]
 [set-for-each (-poly (e b) (-> (-set e) (-> e b) -Void))]
-[set? (make-pred-ty (-poly (e) (-set e)))]
+[set? (make-pred-ty (-set Univ))]
 [set-equal? (-poly (e) (-> (-set e) B))]
 [set-eqv? (-poly (e) (-> (-set e) B))]
 [set-eq? (-poly (e) (-> (-set e) B))]
 
-
+[in-set (-poly (e) (-> (-set e) (-seq e)))]
 [list->set    (-poly (e) (-> (-lst e) (-set e)))]
 [list->seteq  (-poly (e) (-> (-lst e) (-set e)))]
 [list->seteqv (-poly (e) (-> (-lst e) (-set e)))]
 [set->list (-poly (e) (-> (-set e) (-lst e)))]
 
+;Section 3.4 (Byte Strings)
 [bytes (->* (list) -Integer -Bytes)]
 [bytes? (make-pred-ty -Bytes)]
 [make-bytes (cl-> [(-Integer -Integer) -Bytes]
@@ -1129,7 +1138,7 @@
 
 
 ;Section 9.7 (Exiting)
-[exit (-> (Un))]
+[exit (->opt [Univ] (Un))]
 [exit-handler (-Param (-> Univ ManyUniv) (-> Univ ManyUniv))]
 [executable-yield-handler (-Param (-> -Byte ManyUniv) (-> -Byte ManyUniv))]
 
@@ -1146,7 +1155,8 @@
   (-> (-val 'gc) (Un (-val 'cgc) (-val '3m)))
   (-> (-val 'link) (Un (-val 'static) (-val 'shared) (-val 'dll) (-val 'framework)))
   (-> (-val 'so-suffix) -Bytes)
-  (-> (-val 'machine) -String))]
+  (-> (-val 'machine) -String)
+  (-> (-val 'word) -PosInt))]
 [system-language+country (-> -String)]
 [system-library-subpath (->opt [(Un (-val #f) (-val 'cgc) (-val '3m))] -Path)]
 
@@ -1190,12 +1200,12 @@
                           (-opt -Integer)
                           (-opt -Integer)
                           (-opt -Integer)))]
-        [srcvec (make-HeterogenousVector (list
-                                          Univ
-                                          (-opt -Integer)
-                                          (-opt -Integer)
-                                          (-opt -Integer)
-                                          (-opt -Integer)))]
+        [srcvec (make-HeterogeneousVector (list
+                                           Univ
+                                           (-opt -Integer)
+                                           (-opt -Integer)
+                                           (-opt -Integer)
+                                           (-opt -Integer)))]
         [srcloc (Un S (-val #f) srclist srcvec)]
         [prop (-opt S)]
         [cert (-opt S)])
@@ -1383,8 +1393,10 @@
 
 
 
-[values (-polydots (b a) (cl->* (->acc (list b) b null)
-                                (null (a a) . ->... . (make-ValuesDots null a 'a))))]
+[values (-polydots (a b) (cl->*
+                           (-> (-values null))
+                           (->acc (list a) a null)
+                           ((list a) (b b) . ->... . (make-ValuesDots (list (-result a)) b 'b))))]
 [call-with-values (-polydots (b a) ((-> (make-ValuesDots null a 'a)) (null (a a) . ->... . b) . -> .  b))]
 
 [read-accept-reader (-Param B B)]
@@ -1555,11 +1567,11 @@
                           . ->... .
                           -Index))]
 [vector-filter (-poly (a b) (cl->*
-                             ((make-pred-ty (list a) Univ b)
-                              (-vec a)
-                              . -> .
-                              (-vec b))
-                             ((a . -> . Univ) (-vec a) . -> . (-vec a))))]
+                              ((asym-pred a Univ (-FS (-filter b 0) -top))
+                               (-vec a)
+                               . -> .
+                               (-vec b))
+                              ((a . -> . Univ) (-vec a) . -> . (-vec a))))]
 
 [vector-filter-not
  (-poly (a b) (cl->* ((a . -> . Univ) (-vec a) . -> . (-vec a))))]
@@ -1569,7 +1581,7 @@
                ((-vec a) -Integer . -> . (-vec a))
                ((-vec a) -Integer -Integer . -> . (-vec a))))]
 [vector-map (-polydots (c a b) ((list ((list a) (b b) . ->... . c) (-vec a))
-                         ((-vec b) b) . ->... .(-vec c)))]
+                                ((-vec b) b) . ->... .(-vec c)))]
 [vector-map! (-polydots (a b) ((list ((list a) (b b) . ->... . a) (-vec a))
                                ((-vec b) b) . ->... .(-vec a)))]
 [vector-append (-poly (a) (->* (list) (-vec a) (-vec a)))]
@@ -1578,9 +1590,9 @@
 [vector-take-right   (-poly (a) ((-vec a) -Integer . -> . (-vec a)))]
 [vector-drop-right   (-poly (a) ((-vec a) -Integer . -> . (-vec a)))]
 [vector-split-at
- (-poly (a) ((list (-vec a)) -Integer . ->* . (-values (list (-vec a) (-vec a)))))]
+ (-poly (a) ((-vec a) -Integer . -> . (-values (list (-vec a) (-vec a)))))]
 [vector-split-at-right
- (-poly (a) ((list (-vec a)) -Integer . ->* . (-values (list (-vec a) (-vec a)))))]
+ (-poly (a) ((-vec a) -Integer . -> . (-values (list (-vec a) (-vec a)))))]
 
 ;vector->values
 
@@ -1612,9 +1624,9 @@
                                     (arg-in (make-opt-in-port in))
                                     (arg-err (make-opt-out-port err))
                                     (result (-values (list -Subprocess
-                                                 (make-opt-in-port (not out))
-                                                 (make-opt-out-port (not in))
-                                                 (make-opt-in-port (not err))))))
+                                                           (make-opt-in-port (not out))
+                                                           (make-opt-out-port (not in))
+                                                           (make-opt-in-port (not err))))))
                                 (if exact
                                     (-> arg-out arg-in arg-err -Pathlike (-val 'exact) -String result)
                                     (->* (list arg-out arg-in arg-err -Pathlike)
@@ -1650,32 +1662,29 @@
 
 [process (-> -String
              (-values (list -Input-Port -Output-Port -Nat -Input-Port
-              (cl->*
-                (-> (-val 'status) (one-of/c 'running 'done-ok 'done-error))
-                (-> (-val 'exit-code) (-opt -Byte))
-                (-> (-val 'wait) ManyUniv)
-                (-> (-val 'interrupt) -Void)
-                (-> (-val 'kill) -Void)))))]
+                            (cl->* (-> (-val 'status) (one-of/c 'running 'done-ok 'done-error))
+                                   (-> (-val 'exit-code) (-opt -Byte))
+                                   (-> (-val 'wait) ManyUniv)
+                                   (-> (-val 'interrupt) -Void)
+                                   (-> (-val 'kill) -Void)))))]
 
 
 [process*
  (cl->*
    (->* (list -Pathlike) (Un -Path -String -Bytes)
-             (-values (list -Input-Port -Output-Port -Nat -Input-Port
-              (cl->*
-                (-> (-val 'status) (one-of/c 'running 'done-ok 'done-error))
-                (-> (-val 'exit-code) (-opt -Byte))
-                (-> (-val 'wait) ManyUniv)
-                (-> (-val 'interrupt) -Void)
-                (-> (-val 'kill) -Void)))))
+        (-values (list -Input-Port -Output-Port -Nat -Input-Port
+                       (cl->* (-> (-val 'status) (one-of/c 'running 'done-ok 'done-error))
+                              (-> (-val 'exit-code) (-opt -Byte))
+                              (-> (-val 'wait) ManyUniv)
+                              (-> (-val 'interrupt) -Void)
+                              (-> (-val 'kill) -Void)))))
    (-> -Pathlike (-val 'exact) -String
-             (-values (list -Input-Port -Output-Port -Nat -Input-Port
-              (cl->*
-                (-> (-val 'status) (one-of/c 'running 'done-ok 'done-error))
-                (-> (-val 'exit-code) (-opt -Byte))
-                (-> (-val 'wait) ManyUniv)
-                (-> (-val 'interrupt) -Void)
-                (-> (-val 'kill) -Void))))))]
+       (-values (list -Input-Port -Output-Port -Nat -Input-Port
+                      (cl->* (-> (-val 'status) (one-of/c 'running 'done-ok 'done-error))
+                             (-> (-val 'exit-code) (-opt -Byte))
+                             (-> (-val 'wait) ManyUniv)
+                             (-> (-val 'interrupt) -Void)
+                             (-> (-val 'kill) -Void))))))]
 
 [process/ports
  (let* ((fun-type
@@ -1709,12 +1718,12 @@
                (err-vals '(#t #f stdout)))
           (for*/list ((out bools) (in bools) (err err-vals))
             (make-specific-case out in err)))))
- (apply cl->*
-  (append
-    specific-cases
-    (list
-     (-> (-opt -Output-Port) (-opt -Input-Port) (Un -Output-Port (one-of/c #f 'stdout)) -String
-                (-lst* (-opt -Input-Port) (-opt -Output-Port) -Nat (-opt -Input-Port) fun-type))))))]
+   (apply cl->*
+    (append
+      specific-cases
+      (list
+       (-> (-opt -Output-Port) (-opt -Input-Port) (Un -Output-Port (one-of/c #f 'stdout)) -String
+           (-lst* (-opt -Input-Port) (-opt -Output-Port) -Nat (-opt -Input-Port) fun-type))))))]
 
 [process*/ports
  (let* ((fun-type
@@ -1754,21 +1763,23 @@
                (err-vals '(#t #f stdout)))
           (for*/list ((out bools) (in bools) (err err-vals) (exact bools))
             (make-specific-case out in err exact)))))
- (apply cl->*
-  (append specific-cases
-   (list
-     (->* (list (-opt -Output-Port) (-opt -Input-Port) (Un -Output-Port (one-of/c #f 'stdout)) -Pathlike)
+   (apply cl->*
+    (append specific-cases
+     (list
+       (->* (list (-opt -Output-Port) (-opt -Input-Port) (Un -Output-Port (one-of/c #f 'stdout)) -Pathlike)
             (Un -Path -String -Bytes)
-              (-lst* (-opt -Input-Port) (-opt -Output-Port) -Nat (-opt -Input-Port) fun-type))
-     (-> (-opt -Output-Port) (-opt -Input-Port) (Un -Output-Port (one-of/c #f 'stdout)) -Pathlike (-val 'exact) -String
-              (-lst* (-opt -Input-Port) (-opt -Output-Port) -Nat (-opt -Input-Port) fun-type))))))]
+            (-lst* (-opt -Input-Port) (-opt -Output-Port) -Nat (-opt -Input-Port) fun-type))
+       (-> (-opt -Output-Port) (-opt -Input-Port) (Un -Output-Port (one-of/c #f 'stdout)) -Pathlike (-val 'exact) -String
+           (-lst* (-opt -Input-Port) (-opt -Output-Port) -Nat (-opt -Input-Port) fun-type))))))]
 
 
 
 ;; probably the most useful cases
-[curry (-poly (a b c)
-              (cl->* ((a b . -> . c) a . -> . (b . -> . c))
-                     ((a b . -> . c) . -> . (a . -> . (b . -> . c)))))]
+;; doesn't cover cases where we pass multiple of the function's arguments to curry,
+;; also doesn't express that the returned function is itself curried
+[curry (-polydots (a c b)
+                  (cl->* ((->... (list a) (b b) c) a . -> . (->... '() (b b) c))
+                         ((->... (list a) (b b) c) . -> . (a . -> . (->... '() (b b) c)))))]
 ;; mutable pairs
 [mcons (-poly (a b) (-> a b (-mpair a b)))]
 [mcar (-poly (a b)
@@ -1903,7 +1914,7 @@
                                   (-val null)))))))))]
 [module-compiled-language-info
  (-> -Compiled-Module-Expression
-     (-opt (make-HeterogenousVector (list -Module-Path -Symbol Univ))))]
+     (-opt (make-HeterogeneousVector (list -Module-Path -Symbol Univ))))]
 
 ;Section 13.4.3
 [dynamic-require
@@ -1924,7 +1935,7 @@
 [module->language-info
  (->opt (Un -Module-Path -Path -Resolved-Module-Path)
         [Univ]
-        (-opt (make-HeterogenousVector (list -Module-Path -Symbol Univ))))]
+        (-opt (make-HeterogeneousVector (list -Module-Path -Symbol Univ))))]
 
 
 [module->imports (-> -Compiled-Module-Expression
@@ -1969,7 +1980,7 @@
 [make-security-guard
  (->opt -Security-Guard
         (-> Sym (-opt -Path) (-lst Sym) ManyUniv)
-        (-> Sym (-opt -String) (-opt -PosInt) (Un (one-of/c 'server 'client)  ManyUniv))
+        (-> Sym (-opt -String) (-opt -PosInt) (one-of/c 'server 'client)  ManyUniv)
         [(-opt (-> Sym -Path -Path ManyUniv))]
         -Security-Guard)]
 [current-security-guard (-Param -Security-Guard -Security-Guard)]
@@ -2017,26 +2028,84 @@
 [stx->list (-> (-Syntax Univ) (-lst (-Syntax Univ)))]
 [stx-list? (-> (-Syntax Univ) -Boolean)]
 
-;Section 9.4 (Continuations)
-
+;; Section 9.4 (Continuations)
+[call-with-continuation-prompt
+ (-polydots (a b d c)
+   (cl->*
+    (-> (-> b) (make-Prompt-Tagof b (-> (-> d) d)) (Un b d))
+    (-> (-> b) (make-Prompt-Tagof b (->... '() (c c) d)) (->... '() (c c) d)
+        (Un b d))
+    (-> (-> b) Univ)))]
+[abort-current-continuation
+ (-polydots (a b d e c)
+   (cl->*
+    (->... (list (make-Prompt-Tagof b (->... '() (c c) d))) (c c) e)
+    (->... (list (make-Prompt-Tagof b (->... '() (c c) ManyUniv))) (c c) e)))]
+[make-continuation-prompt-tag
+ (-poly (a b) (->opt [Sym] (make-Prompt-Tagof a b)))]
+;; default-continuation-prompt-tag is defined in "base-contracted.rkt"
+[call-with-current-continuation
+ (-poly (a b) (((a . -> . (Un)) . -> . b) . -> . (Un a b)))]
+[call/cc (-poly (a b) (((a . -> . (Un)) . -> . b) . -> . (Un a b)))]
+[call-with-composable-continuation
+ (-polydots (b c a)
+   (-> ;; takes a continuation and should return the same
+       ;; type as the continuation's input type
+       (-> (->... '() (a a) b) (make-ValuesDots '() a 'a))
+       (make-Prompt-Tagof b c)
+       ;; the continuation's input is the same as the
+       ;; return type here
+       (make-ValuesDots '() a 'a)))]
+[call-with-escape-continuation
+ (-poly (a b) (((a . -> . (Un)) . -> . b) . -> . (Un a b)))]
+[call/ec (-poly (a b) (((a . -> . (Un)) . -> . b) . -> . (Un a b)))]
 [call-with-continuation-barrier (-poly (a) (-> (-> a) a))]
-[continuation-prompt-available? (-> -Prompt-Tag B)]
-
-[make-continuation-prompt-tag (->opt [Sym] -Prompt-Tag)]
-[default-continuation-prompt-tag (-> -Prompt-Tag)]
-[continuation-prompt-tag? (make-pred-ty -Prompt-Tag)]
+[continuation-prompt-available? (-> (make-Prompt-TagTop) B)]
+[continuation?
+ (asym-pred Univ B (-FS (-filter top-func 0) -top))]
+[continuation-prompt-tag? (make-pred-ty (make-Prompt-TagTop))]
 [dynamic-wind (-poly (a) (-> (-> ManyUniv) (-> a) (-> ManyUniv) a))]
 
-;Section 9.5 (Continuation Marks)
-;continuation-marks needs type for continuations as other possible first argument
-[continuation-marks (->opt (Un (-val #f) -Thread) [-Prompt-Tag] -Cont-Mark-Set)]
-[current-continuation-marks (->opt [-Prompt-Tag]  -Cont-Mark-Set)]
-[continuation-mark-set->list (->opt -Cont-Mark-Set Univ [-Prompt-Tag] (-lst Univ))]
-[continuation-mark-set->list* (->opt -Cont-Mark-Set (-lst Univ) [Univ -Prompt-Tag] (-lst (-vec Univ)))]
-[continuation-mark-set-first (->opt (-opt -Cont-Mark-Set) Univ [Univ -Prompt-Tag] Univ)]
-[call-with-immediate-continuation-mark (-poly (a) (->opt Univ (-> Univ a) [Univ] a))]
+;; Section 9.5 (Continuation Marks)
+;; continuation-marks needs type for continuations as other
+;; possible first argument
+[continuation-marks
+ (->opt (Un (-val #f) -Thread) [(make-Prompt-TagTop)] -Cont-Mark-Set)]
+[current-continuation-marks (->opt [(make-Prompt-TagTop)] -Cont-Mark-Set)]
+[continuation-mark-set->list 
+ (-poly (a)
+        (cl->* 
+         (->opt -Cont-Mark-Set (make-Continuation-Mark-Keyof a)
+                [(make-Prompt-TagTop)] (-lst a))
+         (->opt -Cont-Mark-Set Univ [(make-Prompt-TagTop)] (-lst Univ))))]
+[continuation-mark-set->list* 
+ (-poly (a b)
+        (cl->* 
+         (->opt -Cont-Mark-Set
+                (-lst (make-Continuation-Mark-Keyof a))
+                [b (make-Prompt-TagTop)]
+                (-lst (-vec (Un a b))))
+         (->opt -Cont-Mark-Set
+                (-lst Univ)
+                [Univ (make-Prompt-TagTop)]
+                (-lst (-vec Univ)))))]
+[continuation-mark-set-first 
+ (-poly (a b)
+        (cl->*
+         (-> (-opt -Cont-Mark-Set) (make-Continuation-Mark-Keyof a)
+             (-opt a))
+         (->opt (-opt -Cont-Mark-Set) (make-Continuation-Mark-Keyof a)
+                [b (make-Prompt-TagTop)]
+                (Un a b))
+         (->opt (-opt -Cont-Mark-Set) Univ [Univ (make-Prompt-TagTop)] Univ)))]
+[call-with-immediate-continuation-mark
+ (-poly (a) (->opt Univ (-> Univ a) [Univ] a))]
+[continuation-mark-key? (make-pred-ty (make-Continuation-Mark-KeyTop))]
 [continuation-mark-set? (make-pred-ty -Cont-Mark-Set)]
-[continuation-mark-set->context (-> -Cont-Mark-Set (-lst (-pair (-opt Sym) Univ)))] ;TODO add srcloc
+[make-continuation-mark-key
+ (-poly (a) (->opt [-Symbol] (make-Continuation-Mark-Keyof a)))]
+[continuation-mark-set->context
+ (-> -Cont-Mark-Set (-lst (-pair (-opt Sym) Univ)))] ;TODO add srcloc
 
 
 ;Section 14.6 (Time)
@@ -2051,7 +2120,8 @@
 [logger-name (-> -Logger (-opt Sym))]
 [current-logger (-Param -Logger -Logger)]
 
-[log-message (-> -Logger -Log-Level -String Univ -Void)]
+[log-message (cl->* (-> -Logger -Log-Level -String Univ -Void)
+                    (-> -Logger -Log-Level (Un (-val #f) -Symbol) -String Univ -Void))]
 [log-level? (-> -Logger -Log-Level  B)]
 
 [log-receiver? (make-pred-ty -Log-Receiver)]
@@ -2087,11 +2157,11 @@
 [pseudo-random-generator? (make-pred-ty -Pseudo-Random-Generator)]
 [current-pseudo-random-generator (-Param -Pseudo-Random-Generator -Pseudo-Random-Generator)]
 [pseudo-random-generator->vector
- (-> -Pseudo-Random-Generator (make-HeterogenousVector (list -PosInt -PosInt -PosInt -PosInt -PosInt -PosInt)))]
+ (-> -Pseudo-Random-Generator (make-HeterogeneousVector (list -PosInt -PosInt -PosInt -PosInt -PosInt -PosInt)))]
 [vector->pseudo-random-generator
- (-> (make-HeterogenousVector (list -PosInt -PosInt -PosInt -PosInt -PosInt -PosInt)) -Pseudo-Random-Generator)]
+ (-> (make-HeterogeneousVector (list -PosInt -PosInt -PosInt -PosInt -PosInt -PosInt)) -Pseudo-Random-Generator)]
 [vector->pseudo-random-generator!
- (-> -Pseudo-Random-Generator (make-HeterogenousVector (list -PosInt -PosInt -PosInt -PosInt -PosInt -PosInt)) -Void)]
+ (-> -Pseudo-Random-Generator (make-HeterogeneousVector (list -PosInt -PosInt -PosInt -PosInt -PosInt -PosInt)) -Void)]
 
 [current-evt-pseudo-random-generator (-Param -Pseudo-Random-Generator -Pseudo-Random-Generator)]
 
@@ -2255,8 +2325,8 @@
 ;12.1.10.1
 [port->list
  (-poly (a) (cl->*
-  (-> (-lst Univ))
-  (->opt (-> -Input-Port a) [-Input-Port] (-lst a))))]
+             (-> (-lst Univ))
+             (->opt (-> -Input-Port a) [-Input-Port] (-lst a))))]
 [port->string (->opt [-Input-Port] -String)]
 [port->bytes (->opt [-Input-Port] -Bytes)]
 #|
@@ -2501,7 +2571,7 @@
 [pretty-print (Univ [-Output-Port (one-of/c 0 1)] . ->opt . -Void)]
 [pretty-write (Univ [-Output-Port] . ->opt . -Void)]
 [pretty-display (Univ [-Output-Port] . ->opt . -Void)]
-[pretty-format (Univ [-Output-Port] . ->opt . -Void)]
+[pretty-format (Univ [-Nat] . ->opt . -String)]
 [pretty-print-handler (-> Univ -Void)]
 
 [pretty-print-columns (-Param (Un -Nat (-val 'infinity)) (Un -Nat (-val 'infinity)))]
@@ -2616,7 +2686,7 @@
 
 ;Section 9.3 (Delayed Evaluation)
 [promise? (make-pred-ty (-Promise Univ))]
-[force (-poly (a) (-> (-Promise a) a))]
+[force (-poly (a) (->acc (list (-Promise a)) a (list -force)))]
 [promise-forced? (-poly (a) (-> (-Promise a) B))]
 [promise-running? (-poly (a) (-> (-Promise a) B))]
 

@@ -465,13 +465,13 @@
                               id (list-tail frames (send (get-tab) get-frame-num))
                                           ;; id found
                                           (lambda (val _)
-                                (cond
-                                  [(render val) => (lambda (str)
-                                                     (string-append
-                                                      (symbol->string (syntax-e id)) " = " str))]
-                                  [else ""]))
+                                            (cond
+                                              [(render val) => (lambda (str)
+                                                                 (string-append
+                                                                  (symbol->string (syntax-e id)) " = " str))]
+                                              [else ""]))
                                           ;; id not found
-                              (lambda () ""))])
+                                          (lambda () ""))])
                        (send (get-tab) set-mouse-over-msg (clean-status rendered))))))
                (super on-event event)]
               [(send event button-down? 'right)
@@ -1341,10 +1341,10 @@
           (set! variables-text (new text% [auto-wrap #f]))
           (let ([stack-frames-panel (make-object vertical-panel% stack-view-panel)])
             (new message% [parent stack-frames-panel] [label "Stack"])
-            (new editor-canvas% [parent stack-frames-panel] [editor stack-frames] [style '(no-hscroll)]))
+            (new editor-canvas% [parent stack-frames-panel] [editor stack-frames] [style '(auto-hscroll)]))
           (let ([variables-panel (make-object vertical-panel% stack-view-panel)])
             (new message% [parent variables-panel] [label "Variables"])
-            (new editor-canvas% [parent variables-panel] [editor variables-text] [style '(no-hscroll)]))
+            (new editor-canvas% [parent variables-panel] [editor variables-text] [style '(auto-hscroll)]))
           ;; parent of panel with debug buttons
           (set! debug-parent-panel
                 (make-object vertical-panel% debug-grandparent-panel))
@@ -1391,7 +1391,7 @@
                (label (string-constant debug-tool-button-name))
                (bitmap debug-bitmap)
                (alternate-bitmap small-debug-bitmap)
-               (parent (new vertical-pane%
+               (parent (new panel:horizontal-discrete-sizes%
                             [parent (get-button-panel)]
                             [alignment '(center center)]))
                (callback (λ (button) (debug-callback)))))
@@ -1526,9 +1526,9 @@
                   (send (send debug-button get-parent) delete-child debug-button)))))
         
         (send (get-button-panel) change-children
-              (lambda (_)
+              (lambda (children)
                 (cons (send debug-button get-parent)
-                      (remq (send debug-button get-parent) _))))
+                      (remq (send debug-button get-parent) children))))
         
         ; hide debug button if it's not supported for the initial language:
         (check-current-language-for-debugger)))

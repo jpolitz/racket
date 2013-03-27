@@ -53,6 +53,7 @@
 
          com-methods com-method-type com-invoke com-omit
          com-get-properties com-get-property-type com-get-property
+         com-get-property*
          com-set-properties com-set-property-type com-set-property!
 
          com-events com-event-type
@@ -1589,7 +1590,15 @@
 (define (scheme-to-variant! var a elem-desc scheme-type #:mode [mode '(in)])
   (cond
    [(type-described? a)
-    (scheme-to-variant! var (type-described-value a) elem-desc scheme-type #:mode mode)]
+    (scheme-to-variant! var
+			(type-described-value a)
+			(if (any-type? scheme-type)
+			    #f
+			    elem-desc)
+			(if (any-type? scheme-type)
+			    (type-described-description a)
+			    scheme-type)
+			#:mode mode)]
    [(and (pair? scheme-type) (eq? 'variant (car scheme-type)))
     (scheme-to-variant! var a elem-desc (cadr scheme-type) #:mode mode)]
    [(eq? a com-omit)
@@ -2047,6 +2056,9 @@
     (begin0
      (com-get-property target-obj (list-ref names (sub1 len)))
      (com-release target-obj))]))
+
+(define (com-get-property* obj name . args)
+  (do-com-invoke 'com-get-property obj name args INVOKE_PROPERTYGET))
 
 (define com-set-property!
   (case-lambda

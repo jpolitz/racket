@@ -48,7 +48,11 @@ places that share the value, because they are allowed in a
 @deftech{shared memory space}. See @racket[place-message-allowed?].
 
 A @tech{place channel} can be used as a @tech{synchronizable event}
-(see @secref["sync"]) to receive a value through the channel. A place
+(see @secref["sync"]) to receive a value through the channel.
+A @tech{place channel} is @tech{ready for synchronization} when
+a message is available on the channel, and the @tech{place channel}'s
+@tech{synchronization result} is the message (which is removed on
+synchronization). A place
 can also receive messages with @racket[place-channel-get], and
 messages can be sent with @racket[place-channel-put].
 
@@ -90,6 +94,16 @@ racket
   (place-channel-put pch (format "Hello from place ~a" 
                                   (place-channel-get pch))))
 ]
+
+Place channels are subject to @tech{garbage collection}, like other
+Racket values, and a @tech{thread} that is blocked reading from a
+@tech{place channel} can be garbage collected if @tech{place
+channel}'s writing end becomes unreachable. @elemtag['(caveat
+"place-channel-gc")]{However}, unlike normal @tech{channel} blocking,
+if otherwise unreachable threads are mutually blocked on place
+channels that are reachable only from the same threads, the threads
+and place channels are all considered reachable, instead of
+unreachable.
 
 
 @defproc[(place-enabled?) boolean?]{
@@ -237,7 +251,8 @@ The @racket[dynamic-place*] procedure returns four values:
 @defproc[(place-dead-evt [p place?]) evt?]{
 
 Returns a @tech{synchronizable event} (see @secref["sync"]) that is
-ready if and only if @racket[p] has terminated.
+@tech{ready for synchronization} if and only if @racket[p] has terminated.
+@ResultItself{place-dead event}.
 
 If any pumping threads were created to connect a non-@tech{file-stream
   port} to the ports in the place for @racket[p] (see

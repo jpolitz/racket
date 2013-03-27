@@ -5,7 +5,7 @@
          "rep-utils.rkt" "object-rep.rkt" "filter-rep.rkt" "free-variance.rkt"
          racket/match ;mzlib/etc
          racket/contract
-         unstable/lazy-require
+         racket/lazy-require
          (for-syntax racket/base syntax/parse))
 
 ;; Ugly hack - should use units
@@ -23,9 +23,22 @@
           (not (fld? e))
           (not (Values? e))
           (not (ValuesDots? e))
+          (not (AnyValues? e))
           (not (Result? e)))))
 
+;; (or/c Type/c Values? Results?)
+;; Anything that can be treated as a Values by sufficient expansion
+(define Values/c?
+   (λ (e)
+     (and (Type? e)
+          (not (Scope? e))
+          (not (arr? e))
+          (not (fld? e))
+          (not (ValuesDots? e))
+          (not (AnyValues? e)))))
+
 (define Type/c (flat-named-contract 'Type Type/c?))
+(define Values/c (flat-named-contract 'Values Values/c?))
 
 ;; Name = Symbol
 
@@ -101,10 +114,10 @@
   [#:key 'vector])
 
 ;; elems are all Types
-(def-type HeterogenousVector ([elems (listof Type/c)])
+(def-type HeterogeneousVector ([elems (listof Type/c)])
   [#:frees (λ (f) (make-invariant (combine-frees (map f elems))))]
   [#:key 'vector]
-  [#:fold-rhs (*HeterogenousVector (map type-rec-id elems))])
+  [#:fold-rhs (*HeterogeneousVector (map type-rec-id elems))])
 
 ;; elem is a Type
 (def-type Box ([elem Type/c])
@@ -212,6 +225,10 @@
   [#:frees (λ (f) (combine-frees (map f rs)))]
   [#:fold-rhs (*Values (map type-rec-id rs))])
 
+
+(def-type AnyValues ()
+  [#:fold-rhs #:base])
+
 (def-type ValuesDots ([rs (listof Result?)] [dty Type/c] [dbound (or/c symbol? natural-number/c)])
   [#:frees (if (symbol? dbound)
                (free-vars-remove (combine-frees (map free-vars* (cons dty rs))) dbound)
@@ -222,9 +239,11 @@
                (combine-frees (map free-idxs* (cons dty rs))))]
   [#:fold-rhs (*ValuesDots (map type-rec-id rs) (type-rec-id dty) dbound)])
 
+(define SomeValues/c (or/c Values? AnyValues? ValuesDots?))
+
 ;; arr is NOT a Type
 (def-type arr ([dom (listof Type/c)]
-               [rng (or/c Values? ValuesDots?)]
+               [rng SomeValues/c]
                [rest (or/c #f Type/c)]
                [drest (or/c #f (cons/c Type/c (or/c natural-number/c symbol?)))]
                [kws (listof Keyword?)])
@@ -309,7 +328,8 @@
                        (and proc (type-rec-id proc))
                        poly?
                        pred-id)]
-  [#:key 'struct])
+  ;; This should eventually be based on understanding of struct properties.
+  [#:key '(struct procedure)])
 
 ;; A structure type descriptor
 ;; s : struct
@@ -323,6 +343,9 @@
 (def-type MPairTop () [#:fold-rhs #:base] [#:key 'mpair])
 (def-type StructTop ([name Struct?]) [#:key 'struct])
 (def-type ThreadCellTop () [#:fold-rhs #:base] [#:key 'thread-cell])
+(def-type Prompt-TagTop () [#:fold-rhs #:base] [#:key 'prompt-tag])
+(def-type Continuation-Mark-KeyTop ()
+  [#:fold-rhs #:base] [#:key 'continuation-mark-key])
 
 ;; v : Racket Value
 (def-type Value (v) [#:frees #f] [#:fold-rhs #:base] [#:key (cond [(number? v) 'number]
@@ -409,6 +432,20 @@
   [#:key #f] [#:fold-rhs (*Sequence (map type-rec-id tys))])
 
 (def-type Future ([t Type/c]) [#:key 'future])
+
+;; body: the type of the body
+;; handler: the type of the prompt handler
+;;   prompts with this tag will return a union of `body` 
+;;   and the codomains of `handler`
+(def-type Prompt-Tagof ([body Type/c] [handler Type/c])
+  [#:frees (λ (f) (combine-frees (list (make-invariant (f body))
+                                       (make-invariant (f handler)))))]
+  [#:key 'prompt-tag])
+
+;; value: the type of allowable values
+(def-type Continuation-Mark-Keyof ([value Type/c])
+  [#:frees (λ (f) (make-invariant (f value)))]
+  [#:key 'continuation-mark-key])
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -586,10 +623,21 @@
      (instantiate (*F name) scope)]))
 
 ;; the 'smart' constructor
-(define (Poly* names body)
+;;
+;; Corresponds to closing a type in locally nameless representation
+;; (turns free `names` into bound De Bruijn vars)
+;; Also keeps track of the original name in a table to recover names
+;; for debugging or to correlate with surface syntax
+;;
+;; Provide #:original-names if the names that you are closing off
+;; are *different* from the names you want recorded in the table.
+;;
+;; list<symbol> type #:original-names list<symbol> -> type
+;;
+(define (Poly* names body #:original-names [orig names])
   (if (null? names) body
       (let ([v (*Poly (length names) (abstract-many names body))])
-        (hash-set! name-table v names)
+        (hash-set! name-table v orig)
         v)))
 
 ;; the 'smart' destructor
@@ -650,6 +698,11 @@
                                (list sym (Mu-body* sym t))))
                  (list np bp)))])))
 
+;; These match expanders correspond to opening up a type in
+;; locally nameless representation. When the type is opened,
+;; the nameless bound variables are replaced with free
+;; variables with names.
+;;
 ;; This match expander wraps the smart constructor
 ;; names are generated with gensym
 (define-match-expander Poly:*
@@ -674,6 +727,21 @@
                           [syms (hash-ref name-table t (lambda _ (build-list n (lambda _ (gensym)))))])
                      (list syms (Poly-body* syms t))))
                  (list nps bp)))])))
+
+;; This match expander creates new fresh names for exploring the body
+;; of the polymorphic type. When lexical scoping of type variables is a concern, you
+;; should use this form.
+(define-match-expander Poly-fresh:
+  (lambda (stx)
+    (syntax-case stx ()
+      [(_ nps freshp bp)
+       #'(? Poly?
+            (app (lambda (t)
+                   (let* ([n (Poly-n t)]
+                          [syms (hash-ref name-table t (lambda _ (build-list n (lambda _ (gensym)))))]
+                          [fresh-syms (map gensym syms)])
+                     (list syms fresh-syms (Poly-body* fresh-syms t))))
+                 (list nps freshp bp)))])))
 
 ;; This match expander wraps the smart constructor
 ;; names are generated with gensym
@@ -702,22 +770,24 @@
 
 ;(trace subst subst-all)
 
+
 (provide
- Mu-name: Poly-names:
+ Mu-name:
+ Poly-names: Poly-fresh:
  PolyDots-names:
  Type-seq
  Mu-unsafe: Poly-unsafe:
  PolyDots-unsafe:
  Mu? Poly? PolyDots?
- Type? Filter? Object?
- Type/c
+ Filter? Object?
+ Type/c Type/c?
+ Values/c SomeValues/c
  Poly-n
  PolyDots-n
  free-vars*
  type-compare type<?
  remove-dups
  sub-f sub-o sub-pe
- Values: Values? Values-rs
  (rename-out [Mu:* Mu:]
              [Poly:* Poly:]
              [PolyDots:* PolyDots:]

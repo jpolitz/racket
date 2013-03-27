@@ -21,6 +21,7 @@ TODO
          racket/unit
          racket/list
          racket/port
+         racket/set
          
          string-constants
          setup/xref
@@ -30,6 +31,7 @@ TODO
          "drsig.rkt"
          "local-member-names.rkt"
          "stack-checkpoint.rkt"
+         "parse-logger-args.rkt"
          
          ;; the dynamic-require below loads this module, 
          ;; so we make the dependency explicit here, even
@@ -245,19 +247,22 @@ TODO
   ;; queue is full):
   (define output-limit-size 2000)
   
-  (define setup-scheme-interaction-mode-keymap
-    (λ (keymap)
-      (send keymap add-function "put-previous-sexp"
-            (λ (text event) 
-              (send text copy-prev-previous-expr)))
-      (send keymap add-function "put-next-sexp"
-            (λ (text event) 
-              (send text copy-next-previous-expr)))
-      
-      (keymap:send-map-function-meta keymap "p" "put-previous-sexp")
-      (keymap:send-map-function-meta keymap "n" "put-next-sexp")
-      (send keymap map-function "c:up" "put-previous-sexp")
-      (send keymap map-function "c:down" "put-next-sexp")))
+  (define (setup-scheme-interaction-mode-keymap keymap)
+    (send keymap add-function "put-previous-sexp"
+          (λ (text event) 
+            (send text copy-prev-previous-expr)))
+    (send keymap add-function "put-next-sexp"
+          (λ (text event) 
+            (send text copy-next-previous-expr)))
+    (send keymap add-function "show-interactions-history"
+          (λ (text event) 
+            (send text show-interactions-history)))
+    
+    (keymap:send-map-function-meta keymap "p" "put-previous-sexp")
+    (keymap:send-map-function-meta keymap "n" "put-next-sexp")
+    (send keymap map-function "c:up" "put-previous-sexp")
+    (send keymap map-function "c:down" "put-next-sexp")
+    (keymap:send-map-function-meta keymap "h" "show-interactions-history"))
   
   (define scheme-interaction-mode-keymap (make-object keymap:aug-keymap%))
   (setup-scheme-interaction-mode-keymap scheme-interaction-mode-keymap)
@@ -334,23 +339,13 @@ TODO
      null
      list-of-lists-of-snip/strings?))
   (define (marshall-previous-exprs lls)
-    (map (λ (ls)
-           (list
-            (apply
-             string-append
-             (reverse
-              (map (λ (s)
-                     (cond
-                       [(is-a? s string-snip%)
-                        (send s get-text 0 (send s get-count))]
-                       [(string? s) s]
-                       [else "'non-string-snip"]))
-                   ls)))))
-         lls))
-  (let ([unmarshall (λ (x) x)])
-    (preferences:set-un/marshall
-     'drracket:console-previous-exprs
-     marshall-previous-exprs unmarshall))
+    (for/list ([ls (in-list lls)])
+      (simplify-history-element ls #t)))
+  (let ([unmarshall-previous-exprs (λ (x) x)])
+    (preferences:set-un/marshall 'drracket:console-previous-exprs
+                                 marshall-previous-exprs 
+                                 unmarshall-previous-exprs))
+  
   
   (define color? ((get-display-depth) . > . 8))
   
@@ -809,7 +804,7 @@ TODO
              (user-namespace-box (make-weak-box #f))
              (user-eventspace-main-thread #f)
              (user-break-parameterization #f)
-             (user-logger (make-logger))
+             (user-logger drracket:init:system-logger) ;; for now, just let all messages be everywhere
              
              ;; user-exit-code (union #f byte?)
              ;; #f indicates that exit wasn't called. Integer indicates exit code
@@ -1262,32 +1257,6 @@ TODO
                  
                  (current-logger user-logger)
                  
-                 (thread
-                  (λ ()
-                    (struct gui-event (start? msec name) #:prefab)
-                    ;; forward system events the user's logger, and record any
-                    ;; events that happen on the user's logger to show in the GUI
-                    (let ([sys-evt (make-log-receiver drracket:init:system-logger 'debug)]
-                          [user-evt (make-log-receiver user-logger 'debug)])
-                      (let loop ()
-                        (sync
-                         (handle-evt
-                          sys-evt
-                          (λ (logged)
-                            (unless (gui-event? (vector-ref logged 2))
-                              (log-message user-logger 
-                                           (vector-ref logged 0)
-                                           (vector-ref logged 1)
-                                           (vector-ref logged 2)))
-                            (loop)))
-                         (handle-evt
-                          user-evt
-                          (λ (vec)
-                            (unless (gui-event? (vector-ref vec 2))
-                              (parameterize ([current-eventspace drracket:init:system-eventspace])
-                                (queue-callback (λ () (new-log-message vec)))))
-                            (loop))))))))
-                 
                  (initialize-parameters snip-classes)
                  (let ([drracket-exit-handler
                         (λ (x)
@@ -1463,28 +1432,75 @@ TODO
       
       (define logger-editor #f)
       (define logger-messages '())
+      (define user-log-receiver-args-str (preferences:get 'drracket:logger-receiver-string))
+      (define/public (set-user-log-receiver-args str args) 
+        (set! user-log-receiver-args-str str)
+        (update-log-receiver-to-match-str))
+      (define/public (get-user-log-receiver-args-str) user-log-receiver-args-str)
+      (define/public (enable/disable-capture-log logging-on?)
+        (cond
+          [logging-on?
+           (update-log-receiver-to-match-str)]
+          [else
+           (channel-put user-log-receiver-changed #f)]))
+      (define/private (update-log-receiver-to-match-str)
+        (define args (parse-logger-args user-log-receiver-args-str))
+        (channel-put user-log-receiver-changed
+                     (and args
+                          (apply make-log-receiver user-logger args))))
+      (define user-log-receiver-changed (make-channel))
+      (thread
+       (λ ()
+         (struct gui-event (start end name) #:prefab)
+         (define callback-running? #f)
+         (define evts '())
+         (define sema (make-semaphore 1))
+         (define (user-event-handler-callback)
+           (semaphore-wait sema)
+           (define my-evts evts)
+           (set! evts '())
+           (set! callback-running? #f)
+           (semaphore-post sema)
+           (for ([vec (in-list (reverse my-evts))])
+             (new-log-message vec)))
+         (let loop ([user-log-receiver #f])
+           (sync
+            (handle-evt user-log-receiver-changed
+                        (λ (user-log-receiver) 
+                          (loop user-log-receiver)))
+            (if user-log-receiver
+                (handle-evt user-log-receiver
+                            (λ (vec)
+                              (unless (gui-event? (vector-ref vec 2))
+                                (semaphore-wait sema)
+                                (set! evts (cons vec evts))
+                                (unless callback-running?
+                                  (queue-callback user-event-handler-callback #f)
+                                  (set! callback-running? #t))
+                                (semaphore-post sema))
+                              (loop user-log-receiver)))
+                never-evt)))))
       (define/public (get-logger-messages) logger-messages)
       (define/private (new-log-message vec)
-        (let* ([level (vector-ref vec 0)]
-               [str (cond
-                      [(<= (string-length (vector-ref vec 1)) log-entry-max-size)
-                       (vector-ref vec 1)]
-                      [else
-                       (substring (vector-ref vec 1) 0 log-entry-max-size)])]
-               [msg (vector level str)])
+        (define str
           (cond
-            [(< (length logger-messages) log-max-size)
-             (set! logger-messages (cons msg logger-messages))
-             (update-logger-gui (cons 'add-line msg))]
+            [(<= (string-length (vector-ref vec 1)) log-entry-max-size)
+             (vector-ref vec 1)]
             [else
-             (set! logger-messages
-                   (cons
-                    msg
-                    (let loop ([msgs logger-messages])
-                      (cond
-                        [(null? (cdr msgs)) null]
-                        [else (cons (car msgs) (loop (cdr msgs)))]))))
-             (update-logger-gui (cons 'clear-last-line-and-add-line msg))])))
+             (substring (vector-ref vec 1) 0 log-entry-max-size)]))
+        (cond
+          [(< (length logger-messages) log-max-size)
+           (set! logger-messages (cons str logger-messages))
+           (update-logger-gui (cons 'add-line str))]
+          [else
+           (set! logger-messages
+                 (cons
+                  str
+                  (let loop ([msgs logger-messages])
+                    (cond
+                      [(null? (cdr msgs)) null]
+                      [else (cons (car msgs) (loop (cdr msgs)))]))))
+           (update-logger-gui (cons 'clear-last-line-and-add-line str))]))
       
       (define/private (reset-logger-messages) 
         (set! logger-messages '())
@@ -1798,13 +1814,48 @@ TODO
                       (sub1 previous-expr-pos)))
             (copy-previous-expr))))
       
+      (define/public (show-interactions-history)
+        (define f (new frame:standard-menus% 
+                       [label (string-constant drscheme)]
+                       [width 600]
+                       [height 600]))
+        (define t (new (draw-lines-mixin (text:hide-caret/selection-mixin racket:text%))))
+        (define ec (new editor-canvas% [parent (send f get-area-container)] [editor t]))
+        (for ([prev-expr (in-list (get-previous-exprs))]
+              [i (in-naturals)])
+          (define lp (send t last-position))
+          (unless (zero? i)
+            (send t draw-along-line (- (send t position-paragraph lp) 1)))
+          (for ([snip/string (in-list prev-expr)])
+            (send t insert
+                  (if (string? snip/string)
+                      snip/string
+                      (send snip/string copy))
+                  lp lp))
+          (let ([lp (send t last-position)])
+            (unless (equal? (send t get-character lp) #\newline)
+              (send t insert #\newline lp lp))
+            (unless (equal? (send t get-character (- lp 1)) #\newline)
+              (send t insert #\newline lp lp))))
+        (send t delete (- (send t last-position) 2) (send t last-position))
+        (send t set-position (send t paragraph-start-position (send t last-paragraph)))
+        (send t hide-caret #t)
+        (send t lock #t)
+        (send f show #t))
+      
       ;; private fields
       (define global-previous-exprs (preferences:get 'drracket:console-previous-exprs))
       (define local-previous-exprs null)
       (define/private (get-previous-exprs)
         (append global-previous-exprs local-previous-exprs))
       (define/private (add-to-previous-exprs snips)
-        (set! local-previous-exprs (append local-previous-exprs (list snips))))
+        (let ([prev (get-previous-exprs)])
+          (when (or (null? prev)
+                    (not (same-stuff? (last prev) snips)))
+            (set! local-previous-exprs (append local-previous-exprs (list snips))))))
+      (define/private (same-stuff? s1 s2)
+        (equal? (simplify-history-element s1 #f) 
+                (simplify-history-element s2 #f)))
       
       ; list-of-lists-of-snip/strings? -> list-of-lists-of-snip/strings?
       (define/private (trim-previous-exprs lst)
@@ -2087,3 +2138,96 @@ TODO
               (text:foreground-color-mixin
                (text:normalize-paste-mixin
                 text:clever-file-format%))))))))))))))
+
+(define (draw-lines-mixin text%)
+  (class text%
+    (define line-paras (set))
+    (define/public (draw-along-line para)
+      (set! line-paras (set-add line-paras para)))
+    (inherit paragraph-start-position 
+             paragraph-end-position
+             position-locations)
+    (define ty (box 0.0))
+    (define by (box 0.0))
+    (define/override (on-paint before? dc left top right bottom dx dy draw-caret)
+      (unless before?
+        (define pen (send dc get-pen))
+        (for ([para (in-set line-paras)])
+          (define sp (paragraph-start-position para))
+          (define ep (paragraph-end-position para))
+          (position-locations sp #f ty #f by)
+          (define y (/ (+ (unbox ty) (unbox by)) 2))
+          (send dc set-pen "Lavender" (/ (- (unbox by) (unbox ty)) 3.0) 'solid)
+          (send dc draw-line 
+                (+ dx left)
+                (+ dy y)
+                (+ dx right)
+                (+ dy y))))
+      (super on-paint before? dc left top right bottom dx dy draw-caret))
+    (super-new)))
+
+(define (simplify-history-element s all-to-strings?)
+  (cond
+    [(null? s) '("")]
+    [else
+     (let loop ([acc '()]
+                [s s])
+       (cond
+         [(null? s) acc]
+         [else
+          (define e (car s))
+          (cond
+            [(or all-to-strings? (string? e) (is-a? e string-snip%))
+             (define str (cond
+                           [(is-a? e string-snip%)
+                            (send e get-text 0 (send e get-count))]
+                           [(string? e) e]
+                           [else "'non-string-snip"]))
+             (cond
+               [(null? acc) (loop (list str) (cdr s))]
+               [(string? (car acc))
+                (loop (cons (string-append str (car acc)) (cdr acc))
+                      (cdr s))]
+               [else (loop (cons str acc) (cdr s))])]
+            [else
+             (loop (cons e acc) (cdr s))])]))]))
+
+(module+ test
+  (require rackunit)
+  (define (old-conversion-code ls)
+    (list
+     (apply
+      string-append
+      (reverse
+       (map (λ (s)
+              (cond
+                [(is-a? s string-snip%)
+                 (send s get-text 0 (send s get-count))]
+                [(string? s) s]
+                [else "'non-string-snip"]))
+            ls)))))
+  
+  (check-equal? (simplify-history-element '("xyzpdq") #f)
+                '("xyzpdq"))
+  (check-equal? (simplify-history-element '("a" "b" "c") #f)
+                '("cba"))
+  (let ([i (make-object image-snip%)])
+    (check-equal? (simplify-history-element (list "a" "b" "c" i "d" "e" "f") #f)
+                  (list "fed" i "cba")))
+  
+  (check-equal? (simplify-history-element '() #t)
+                (old-conversion-code '()))
+  (check-equal? (simplify-history-element '("pdq") #t)
+                (old-conversion-code '("pdq")))
+  (check-equal? (simplify-history-element '("a" "b" "c") #t)
+                (old-conversion-code '("a" "b" "c")))
+  (let ([in (list (make-object string-snip% "a")
+                  (make-object string-snip% "b")
+                  (make-object string-snip% "c"))])
+    (check-equal? (simplify-history-element in #t)
+                  (old-conversion-code in)))
+  (let ([in (list (make-object string-snip% "a")
+                  (make-object image-snip%)
+                  (make-object string-snip% "c"))])
+    (check-equal? (simplify-history-element in #t)
+                  (old-conversion-code in))))

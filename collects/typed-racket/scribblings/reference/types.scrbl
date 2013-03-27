@@ -194,7 +194,6 @@ needed to check the desired bounds at runtime.
 @defidform[Null]
 @defidform[EOF]
 @defidform[Continuation-Mark-Set]
-@defidform[Prompt-Tag]
 @defidform[Undefined]
 @defidform[Module-Path]
 @defidform[Module-Path-Index]
@@ -384,13 +383,46 @@ of type @racket[Syntax-E].}
 @racket[(Sexpof Syntax)].}
 
 
+@section{Control}
+
+The following types represent @rtech{prompt tag}s and
+keys for @rtech{continuation mark}s for use with delimited continuation
+functions and continuation mark functions.
+
+@defform[(Prompt-Tagof s t)]{
+  A prompt tag to be used in a continuation prompt whose body
+  produces the type @racket[_s] and whose handler has the type
+  @racket[_t]. The type @racket[_t] must be a function type.
+
+  The domain of @racket[_t] determines the type of the values
+  that can be aborted, using @racket[abort-current-continuation],
+  to a prompt with this prompt tag.
+
+  @ex[(make-continuation-prompt-tag 'prompt-tag)]
+}
+
+@defform[(Continuation-Mark-Keyof t)]{
+  A continuation mark key that is used for continuation mark
+  operations such as @racket[with-continuation-mark] and
+  @racket[continuation-mark-set->list]. The type @racket[_t]
+  represents the type of the data that is stored in the
+  continuation mark with this key.
+
+  @ex[(make-continuation-mark-key 'mark-key)]
+}
+
+
 @section{Other Type Constructors}
 
-@defform*[#:id -> #:literals (* ...)
+@defform*/subs[#:id -> #:literals (* ...)
 	       [(dom ... -> rng)
 	        (dom ... rest * -> rng)
 		(dom ... rest #,(racket ...) bound -> rng)
-                (dom -> rng : pred)]]{is the type of functions from the (possibly-empty)
+                (dom -> rng : pred)]
+               ([dom type
+                     (code:line keyword type)
+                     [keyword type]])]{
+  is the type of functions from the (possibly-empty)
   sequence @racket[dom ...] to the @racket[rng] type.  The second form
   specifies a uniform rest argument of type @racket[rest], and the
   third form specifies a non-uniform rest argument of type
@@ -398,12 +430,19 @@ of type @racket[Syntax-E].}
   second occurrence of @racket[...] is literal, and @racket[bound]
   must be an identifier denoting a type variable. In the fourth form,
   there must be only one @racket[dom] and @racket[pred] is the type
-  checked by the predicate.
+  checked by the predicate. @racket[dom] can include both mandatory and
+  optional keyword arguments.
 
   @ex[(λ: ([x : Number]) x)
       (λ: ([x : Number] . [y : String *]) (length y))
       ormap
-      string?]}
+      string?
+      (:print-type file->string)
+      (: is-zero? : Number #:equality (Number Number -> Any) [#:zero Number] -> Any)
+      (define (is-zero? n #:equality equality #:zero [zero 0])
+        (equality n zero))
+      (is-zero? 2 #:equality =)
+      (is-zero? 2 #:equality eq? #:zero 2.0)]}
 
 @defidform[Procedure]{is the supertype of all function types.}
 

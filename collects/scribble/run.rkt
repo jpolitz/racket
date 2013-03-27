@@ -4,10 +4,11 @@
          "render.rkt"
          scheme/cmdline
          raco/command-name
-         (prefix-in text:  "text-render.rkt")
-         (prefix-in html:  "html-render.rkt")
-         (prefix-in latex: "latex-render.rkt")
-         (prefix-in pdf:   "pdf-render.rkt"))
+         (prefix-in text:     "text-render.rkt")
+         (prefix-in markdown: "markdown-render.rkt")
+         (prefix-in html:     "html-render.rkt")
+         (prefix-in latex:    "latex-render.rkt")
+         (prefix-in pdf:      "pdf-render.rkt"))
 
 (define multi-html:render-mixin
   (lambda (%) (html:render-multi-mixin (html:render-mixin %))))
@@ -54,6 +55,8 @@
       (current-render-mixin (latex:make-render-part-mixin v)))]
    [("--text") "generate text-format output"
     (current-render-mixin text:render-mixin)]
+   [("--markdown") "generate markdown-format output"
+    (current-render-mixin markdown:render-mixin)]
    #:once-each
    [("--dest") dir "write output in <dir>"
     (current-dest-directory dir)]
@@ -76,8 +79,12 @@
     (current-redirect-main url)]
    [("--redirect") url "redirect external links to tag search via <url>"
     (current-redirect url)]
-   [("++xref-in") module-path proc-id "load format-specific cross-ref info by"
-    "calling <proc-id> as exported by <module-path>"
+   [("+m" "++main-xref-in") ("load format-speficic cross-ref info for"
+                             "all installed library collections")
+    (current-xref-input-modules
+     (cons (cons 'setup/xref 'load-collections-xref) (current-xref-input-modules)))]
+   [("++xref-in") module-path proc-id ("load format-specific cross-ref info by"
+                                       "calling <proc-id> as exported by <module-path>")
     (let ([mod (read-one module-path)]
           [id (read-one proc-id)])
       (unless (module-path? mod)

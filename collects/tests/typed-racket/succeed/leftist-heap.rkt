@@ -44,9 +44,10 @@
 
   ;; fixme - type aliases should work in require
 
-  (require/typed current-compare (-> (top top -> number)) srfi/67)
-  (require/typed =? ((top top -> number) top top -> boolean) srfi/67)
-  (require/typed <? ((top top -> number) top top -> boolean) srfi/67)
+  (require/typed srfi/67
+    [current-compare (-> (top top -> number))]
+    [=? ((top top -> number) top top -> boolean)]
+    [<? ((top top -> number) top top -> boolean)])
 
   ;;; DATA DEFINITION
 
@@ -207,7 +208,7 @@
 
   (define: list->heap : (All (a) (case-lambda (comparator (list-of a) -> (Heap a)) ((list-of a) -> (Heap a))))
     ; time: O(n)
-    (pcase-lambda:  (a)
+    (pcase-lambda: (a)
       [([l : (list-of a)])     (list->heap (current-compare) l)]
       [([cmp : comparator] [l : (list-of a)])
        (let* ([e  (#{empty @ a} cmp)]

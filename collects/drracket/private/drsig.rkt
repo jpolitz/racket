@@ -109,8 +109,10 @@
 (define-signature drracket:module-language-tools^ extends drracket:module-language-tools-cm^
   (add-opt-out-toolbar-button
    add-online-expansion-handler
+   register-online-expansion-pref
    
    ;; the below should be hidden from tools
+   get-online-expansion-pref-funcs
    (struct online-expansion-handler (mod-path id local-handler))
    get-online-expansion-handlers
    no-more-online-expansion-handlers))
@@ -147,7 +149,8 @@
    make-language-settings
    get-settings-preferences-symbol
    language-dialog
-   fill-language-dialog))
+   fill-language-dialog
+   language-allows-executable-creation?))
 
 (define-signature drracket:language-configuration/internal^ extends drracket:language-configuration^
   (add-info-specified-languages

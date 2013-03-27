@@ -35,7 +35,8 @@ Returns whatever @racket[proc] returns.
            [interceptor (-> (vector/c
                               (or/c 'fatal 'error 'warning 'info 'debug)
                               string?
-                              any/c)
+                              any/c
+                              (or/c symbol? #f))
                              any)]
            [proc (-> any)]
            [log-spec (or/c 'fatal 'error 'warning 'info 'debug symbol? #f)] ...)
@@ -72,12 +73,14 @@ A lower-level interface to logging is also available.
   @defproc[(stop-recording [listener listener?])
            (listof (vector/c (or/c 'fatal 'error 'warning 'info 'debug)
                              string?
-                             any/c))]]]{
+                             any/c
+                             (or/c symbol? #f)))]]]{
 
 @racket[start-recording] starts recording log messages matching the given
-@racket[log-spec]. Messages will be recorded until stopped by passing the
-returned listener object to @racket[stop-recording]. @racket[stop-recording]
-will then return a list of the log messages that have been reported.
+@racket[log-spec] (see @racket[make-log-receiver] for how @racket[log-spec] is
+interpreted). Messages will be recorded until stopped by passing the returned
+listener object to @racket[stop-recording]. @racket[stop-recording] will then
+return a list of the log messages that have been reported.
 
 @defexamples[
 #:eval the-eval

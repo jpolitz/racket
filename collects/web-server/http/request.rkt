@@ -193,7 +193,7 @@
             [(list _ field value)
              (list* (make-header field (read-one-head in value))
                     (read-header))])]
-      [else (network-error 'read-headers "malformed header")])))
+      [else (network-error 'read-headers "malformed header: ~e" l)])))
 
 ; read-one-head : iport bytes -> bytes
 (define (read-one-head in rhs)
@@ -274,7 +274,17 @@
              [(string->number (bytes->string/utf-8 value))
               => (lambda (len)
                    (let ([raw-bytes (read-bytes len in)])
-                     (values (delay (append (parse-bindings raw-bytes) (force bindings-GET))) raw-bytes)))]
+                     (cond
+                       [(eof-object? raw-bytes)
+                        (network-error
+                         'read-bindings
+                         "Post data ended pre-maturely")]
+                       [else
+                        (values (delay 
+                                  (append
+                                   (parse-bindings raw-bytes)
+                                   (force bindings-GET)))
+                                raw-bytes)])))]
              [else 
               (network-error
                'read-bindings
@@ -288,7 +298,13 @@
         (cond [(string->number (bytes->string/utf-8 value))
                => (lambda (len)
                     (let ([raw-bytes (read-bytes len in)])
-                      (values (delay empty) raw-bytes)))]
+                      (cond
+                        [(eof-object? raw-bytes)
+                         (network-error
+                          'read-bindings
+                          "Post data ended pre-maturely")]
+                        [else
+                         (values (delay empty) raw-bytes)])))]
               [else
                (network-error 
                 'read-bindings

@@ -1,13 +1,20 @@
-#lang scribble/manual
+#lang unstable/2d scribble/manual
 
 @(require scribble/eval
+          scribble/core
+          scribble/html-properties
           racket/sandbox
-          (for-label racket/base
+          unstable/2d/tabular
+          (for-label racket/base racket/vector racket/list
                      math plot
-                     (only-in typed/racket/base Flonum Real Boolean Any Listof Integer))
+                     (only-in typed/racket/base
+                              ->
+                              Flonum Integer Index Real Boolean Any Listof Vectorof FlVector
+                              Nonnegative-Flonum))
           "utils.rkt")
 
 @(define untyped-eval (make-untyped-math-eval))
+@interaction-eval[#:eval untyped-eval (require racket/list)]
 
 @title[#:tag "flonum"]{Flonums}
 @(author-neil)
@@ -16,6 +23,8 @@
 
 For convenience, @racketmodname[math/flonum] re-exports @racketmodname[racket/flonum]
 as well as providing the functions document below.
+
+@local-table-of-contents[]
 
 @section{Additional Flonum Functions}
 
@@ -61,6 +70,8 @@ The @racket[sum] function does the same for heterogenous lists of reals.
 Worst-case time complexity is O(@italic{n}@superscript{2}), though the pathological
 inputs needed to observe quadratic time are exponentially improbable and are hard
 to generate purposely. Expected time complexity is O(@italic{n} log(@italic{n})).
+
+See @racket[flvector-sums] for a variant that computes all the partial sums in @racket[xs].
 }
 
 @deftogether[(@defproc[(flsinh [x Flonum]) Flonum]
@@ -92,21 +103,21 @@ These functions are as robust and accurate as their corresponding inverses.
 @deftogether[(@defproc[(flfactorial [n Flonum]) Flonum]
               @defproc[(flbinomial [n Flonum] [k Flonum]) Flonum]
               @defproc[(flpermutations [n Flonum] [k Flonum]) Flonum]
-              @defproc[(flmultinomial [n Flonum] [k Flonum] ...) Flonum])]{
+              @defproc[(flmultinomial [n Flonum] [ks (Listof Flonum)]) Flonum])]{
 Like @racket[(fl (factorial (fl->exact-integer n)))] and so on, but computed in constant
 time. Also, these return @racket[+nan.0] instead of raising exceptions.
 
-For @racket[factorial]-family functions that return sensible values for non-integers, see
+For factorial-like functions that return sensible values for non-integers, see
 @racket[gamma] and @racket[beta].
 }
 
 @deftogether[(@defproc[(fllog-factorial [n Flonum]) Flonum]
               @defproc[(fllog-binomial [n Flonum] [k Flonum]) Flonum]
               @defproc[(fllog-permutations [n Flonum] [k Flonum]) Flonum]
-              @defproc[(fllog-multinomial [n Flonum] [k Flonum] ...) Flonum])]{
+              @defproc[(fllog-multinomial [n Flonum] [ks (Listof Flonum)]) Flonum])]{
 Like @racket[(fllog (flfactorial n))] and so on, but more accurate and without unnecessary overflow.
 
-For log-@racket[factorial]-family functions that return sensible values for non-integers, see
+For log-factorial-like functions that return sensible values for non-integers, see
 @racket[log-gamma] and @racket[log-beta].
 }
 
@@ -153,7 +164,115 @@ of @racket[fllog1p], which avoids the error-prone subtraction:
 But see @racket[flexpt1p], which is more accurate still.
 }
 
-@defproc[(make-flexp/base [x Real]) (Flonum -> Flonum)]{
+@defproc[(flexpt1p [x Flonum] [y Flonum]) Flonum]{
+Like @racket[(flexpt (+ 1.0 x) y)], but accurate for any @racket[x] and @racket[y].
+}
+
+@defproc[(flexp2 [x Flonum]) Nonnegative-Flonum]{
+Equivalent to @racket[(flexpt 2.0 x)], but faster when @racket[x] is an integer.
+}
+
+@defproc[(fllog2 [x Flonum]) Flonum]{
+Computes the base-2 log of @racket[x] more accurately than @racket[(/ (fllog x) (fllog 2.0))].
+In particular, @racket[(fllog2 x)] is correct for any power of two @racket[x].
+@examples[#:eval untyped-eval
+                 (fllog2 4.5)
+                 (/ (fllog (flexp2 -1066.0)) (fllog 2.0))
+                 (fllog2 (flexp2 -1066.0))]
+Maximum observed error is 0.5006 @tech{ulps}, but is almost always no more than 0.5 (i.e. it is
+almost always @italic{correct}).
+}
+
+@defproc[(fllogb [b Flonum] [x Flonum]) Flonum]{
+Computes the base-@racket[b] log of @racket[x] more accurately than @racket[(/ (fllog x) (fllog b))],
+and handles limit values correctly.
+@examples[#:eval untyped-eval
+                 (plot3d (contour-intervals3d (λ (b x) (fllogb (fl b) (fl x))) 0 4 0 4)
+                         #:x-label "b" #:y-label "x")]
+
+Maximum observed error is 2.1 @tech{ulps}, but is usually less than 0.7 (i.e. near rounding error).
+
+Except possibly at limit values (such as @racket[0.0] and @racket[+inf.0], and @racket[b = 1.0])
+and except when the inner expression underflows or overflows, @racket[fllogb] approximately meets
+these identities for @racket[b > 0.0]:
+@itemlist[@item{Left inverse: @racket[(fllogb b (flexpt b y)) = y]}
+          @item{Right inverse: @racket[(flexpt b (fllogb b x)) = x] when @racket[x > 0.0]}]
+
+Unlike with @racket[flexpt], there is no standard for @racket[fllogb]'s behavior at limit values.
+Fortunately, deriving the following rules (applied in order) is not prohibitively difficult.
+@centered[
+  #2dtabular
+  ╔═════════════════════════════════╦══════════════════╦═════════════════╗
+  ║ @bold{Case}                     ║@bold{Condition}  ║ @bold{Value}    ║
+  ╠═════════════════════════════════╬══════════════════╬═════════════════╣
+  ║ @racket[(fllogb b 1.0)]         ║                  ║ @racket[0.0]    ║
+  ╠═════════════════════════════════╬══════════════════╬═════════════════╣
+  ║ @racket[(fllogb 1.0 x)]         ║                  ║ @racket[+nan.0] ║
+  ╠═════════════════════════════════╬══════════════════╬═════════════════╣
+  ║ @racket[(fllogb b x)]           ║ @racket[b < 0.0] ║ @racket[+nan.0] ║
+  ║                                 ║       "or"       ║                 ║
+  ║                                 ║ @racket[x < 0.0] ║                 ║
+  ╠═════════════════════════════════╩══════════════════╩═════════════════╣
+  ║                                                                      ║
+  ║                        @italic{Double limits}                        ║
+  ║                                                                      ║
+  ╠═════════════════════════════════╦══════════════════╦═════════════════╣
+  ║ @racket[(fllogb 0.0 0.0)]       ║                  ║ @racket[+inf.0] ║
+  ╠═════════════════════════════════╬══════════════════╬═════════════════╣
+  ║ @racket[(fllogb 0.0 +inf.0)]    ║                  ║ @racket[-inf.0] ║
+  ╠═════════════════════════════════╬══════════════════╬═════════════════╣
+  ║ @racket[(fllogb +inf.0 0.0)]    ║                  ║ @racket[-inf.0] ║
+  ╠═════════════════════════════════╬══════════════════╬═════════════════╣
+  ║ @racket[(fllogb +inf.0 +inf.0)] ║                  ║ @racket[+inf.0] ║
+  ╠═════════════════════════════════╩══════════════════╩═════════════════╣
+  ║                                                                      ║
+  ║              @italic{Limits with respect to @racket[b]}              ║
+  ║                                                                      ║
+  ╠═════════════════════════════════╦══════════════════╦═════════════════╣
+  ║ @racket[(fllogb 0.0 x)]         ║ @racket[x < 1.0] ║ @racket[0.0]    ║
+  ╠═════════════════════════════════╬══════════════════╬═════════════════╣
+  ║ @racket[(fllogb 0.0 x)]         ║ @racket[x > 1.0] ║ @racket[-0.0]   ║
+  ╠═════════════════════════════════╬══════════════════╬═════════════════╣
+  ║ @racket[(fllogb +inf.0 x)]      ║ @racket[x > 1.0] ║ @racket[0.0]    ║
+  ╠═════════════════════════════════╬══════════════════╬═════════════════╣
+  ║ @racket[(fllogb +inf.0 x)]      ║ @racket[x < 1.0] ║ @racket[-0.0]   ║
+  ╠═════════════════════════════════╩══════════════════╩═════════════════╣
+  ║                                                                      ║
+  ║              @italic{Limits with respect to @racket[x]}              ║
+  ║                                                                      ║
+  ╠═════════════════════════════════╦══════════════════╦═════════════════╣
+  ║ @racket[(fllogb b 0.0)]         ║ @racket[b < 1.0] ║ @racket[+inf.0] ║
+  ╠═════════════════════════════════╬══════════════════╬═════════════════╣
+  ║ @racket[(fllogb b 0.0)]         ║ @racket[b > 1.0] ║ @racket[-inf.0] ║
+  ╠═════════════════════════════════╬══════════════════╬═════════════════╣
+  ║ @racket[(fllogb b +inf.0)]      ║ @racket[b > 1.0] ║ @racket[+inf.0] ║
+  ╠═════════════════════════════════╬══════════════════╬═════════════════╣
+  ║ @racket[(fllogb b +inf.0)]      ║ @racket[b < 1.0] ║ @racket[-inf.0] ║
+  ╠═════════════════════════════════╩══════════════════╩═════════════════╣
+  ║ #:style                                                              ║
+  ║ (style 'plain                                                        ║
+  ║        (list (table-columns (list (style 'plain (list 'left))        ║
+  ║                                   (style 'plain (list 'center))      ║
+  ║                                   (style 'plain (list 'right))))     ║
+  ║              (attributes '((width . "90%")))))                       ║
+  ╚══════════════════════════════════════════════════════════════════════╝]
+Most of these rules are derived by taking limits of the mathematical base-@racket[b] log function.
+Except for @racket[(fllogb 1.0 x)], when doing so gives rise to ambiguities, they are resolved using
+@racket[flexpt]'s behavior, which follows the IEEE 754 and C99 standards for @tt{pow}.
+
+For example, consider @racket[(fllogb 0.0 0.0)].
+Taking an interated limit, we get ∞ if the outer limit is with respect to @racket[x], or 0 if the
+outer limit is with respect to @racket[b].
+This would normally mean @racket[(fllogb 0.0 0.0) = +nan.0].
+
+However, choosing @racket[+inf.0] ensures that these additional left-inverse and right-inverse
+identities hold:
+@racketblock[(fllogb 0.0 (flexpt 0.0 +inf.0)) = +inf.0
+             (flexpt 0.0 (fllogb 0.0 0.0)) = 0.0]
+Further, choosing @racket[0.0] does not ensure that any additional identities hold.
+}
+
+@defproc[(make-flexpt [x Real]) (Flonum -> Flonum)]{
 Equivalent to @racket[(λ (y) (flexpt x y))] when @racket[x] is a flonum, but much more
 accurate for large @racket[y] when @racket[x] cannot be exactly represented
 by a flonum.
@@ -170,9 +289,9 @@ the error is low near zero, but grows with distance from the origin:
                                (eval:result ""))
                     (eval:alts (flulp-error (flexpt pi y) pi^y)
                                (eval:result @racketresultfont{43.12619934359266}))]
-Using @racket[make-flexp/base], the error is near rounding error everywhere:
+Using @racket[make-flexpt], the error is near rounding error everywhere:
 @interaction[#:eval untyped-eval
-                    (eval:alts (define flexppi (make-flexp/base (bigfloat->rational pi.bf)))
+                    (eval:alts (define flexppi (make-flexpt (bigfloat->rational pi.bf)))
                                (eval:result ""))
                     (eval:alts (flulp-error (flexppi y) pi^y)
                                (eval:result @racketresultfont{0.8738006564073412}))]
@@ -226,12 +345,11 @@ For example, say we want the probability density of the standard normal distribu
 (the bell curve) at 50 standard deviations from zero:
 @interaction[#:eval untyped-eval
                     (require math/distributions)
-                    (define d (normal-dist))
-                    ((dist-pdf d) 50.0)]
+                    (pdf (normal-dist) 50.0)]
 Mathematically, the density is nonzero everywhere, but the density at 50 is less than
 @racket[+min.0]. However, its density in log space, or its log-density, is representable:
 @interaction[#:eval untyped-eval
-                    ((dist-pdf d) 50.0 #t)]
+                    (pdf (normal-dist) 50.0 #t)]
 While this example may seem contrived, it is very common, when computing the density
 of a @italic{vector} of data, for the product of the densities to be too small to represent directly.
 
@@ -374,7 +492,7 @@ approximation is not necessarily represented by a flonum.
               @defthing[-min.0 Flonum]
               @defthing[+min.0 Flonum]
               @defthing[+max.0 Flonum])]{
-The rational flonums with maximum and minimum magnitude.
+The nonzero, rational flonums with maximum and minimum magnitude.
 @examples[#:eval untyped-eval (list -max.0 -min.0 +min.0 +max.0)]
 }
 
@@ -491,6 +609,90 @@ in outputs as close to zero @tech{ulps} as possible.
 The maximum positive and negative subnormal flonums. A flonum @racket[x] is subnormal when
 it is not zero and @racket[((abs x) . <= . +max-subnormal.0)].
 @examples[#:eval untyped-eval +max-subnormal.0]
+}
+
+@section{Additional Flonum Vector Functions}
+
+@defproc[(build-flvector [n Integer] [proc (Index -> Flonum)]) FlVector]{
+Creates a length-@racket[n] flonum vector by applying @racket[proc] to the indexes
+from @racket[0] to @racket[(- n 1)]. Analogous to @racket[build-vector].
+@examples[#:eval untyped-eval
+                 (build-flvector 10 fl)]
+}
+
+@defform[(inline-build-flvector n proc)
+         #:contracts ([n Integer]
+                      [proc (Index -> Flonum)])]{
+Like @racket[build-flvector], but always inlined. This increases speed at the expense of code size.
+}
+
+@defproc[(flvector-map [proc (Flonum Flonum ... -> Flonum)] [xs FlVector] [xss FlVector] ...)
+         FlVector]{
+Applies @racket[proc] to the corresponding elements of @racket[xs] and @racket[xss]. Analogous to
+@racket[vector-map].
+
+The @racket[proc] is meant to accept the same number of arguments as the number of its following
+flonum vector arguments. However, a current limitation in Typed Racket requires @racket[proc]
+to accept @italic{any} number of arguments. To map a single-arity function such as @racket[fl+]
+over the corresponding number of flonum vectors, for now, use @racket[inline-flvector-map].
+}
+
+@defform[(inline-flvector-map proc xs xss ...)
+         #:contracts ([proc (Flonum Flonum ... -> Flonum)]
+                      [xs FlVector]
+                      [xss FlVector])]{
+Like @racket[flvector-map], but always inlined.
+}
+
+@defproc[(flvector-copy! [dest FlVector]
+                         [dest-start Integer]
+                         [src FlVector]
+                         [src-start Integer 0]
+                         [src-end Integer (flvector-length src)])
+         Void]{
+Like @racket[vector-copy!], but for flonum vectors.
+}
+
+@deftogether[(@defproc[(list->flvector [vs (Listof Real)]) FlVector]
+              @defproc[(flvector->list [xs FlVector]) (Listof Flonum)]
+              @defproc[(vector->flvector [vs (Vectorof Real)]) FlVector]
+              @defproc[(flvector->vector [xs FlVector]) (Vectorof Flonum)])]{
+Convert between lists and flonum vectors, and between vectors and flonum vectors.
+}
+
+@deftogether[(@defproc[(flvector+ [xs FlVector] [ys FlVector]) FlVector]
+              @defproc[(flvector* [xs FlVector] [ys FlVector]) FlVector]
+              @defproc*[([(flvector- [xs FlVector]) FlVector]
+                         [(flvector- [xs FlVector] [ys FlVector]) FlVector])]
+              @defproc*[([(flvector/ [xs FlVector]) FlVector]
+                         [(flvector/ [xs FlVector] [ys FlVector]) FlVector])]
+              @defproc[(flvector-scale [xs FlVector] [y Flonum]) FlVector]
+              @defproc[(flvector-abs [xs FlVector]) FlVector]
+              @defproc[(flvector-sqr [xs FlVector]) FlVector]
+              @defproc[(flvector-sqrt [xs FlVector]) FlVector]
+              @defproc[(flvector-min [xs FlVector] [ys FlVector]) FlVector]
+              @defproc[(flvector-max [xs FlVector] [ys FlVector]) FlVector])]{
+Arithmetic lifted to operate on flonum vectors.
+}
+
+@defproc[(flvector-sum [xs FlVector]) Flonum]{
+Like @racket[flsum], but operates on flonum vectors. In fact, @racket[flsum] is defined in terms
+of @racket[flvector-sum].
+}
+
+@defproc[(flvector-sums [xs FlVector]) FlVector]{
+Computes the partial sums of the elements in @racket[xs] in a way that incurs rounding error only
+once for each partial sum.
+@examples[#:eval untyped-eval
+                 (flvector-sums
+                  (flvector 1.0 1e-16 1e-16 1e-16 1e-16 1e100 -1e100))]
+Compare the same example computed by direct summation:
+@interaction[#:eval untyped-eval
+                    (rest
+                     (reverse
+                      (foldl (λ (x xs) (cons (+ x (first xs)) xs))
+                             (list 0.0)
+                             '(1.0 1e-16 1e-16 1e-16 1e-16 1e100 -1e100))))]
 }
 
 @(close-eval untyped-eval)

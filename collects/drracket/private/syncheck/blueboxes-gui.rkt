@@ -4,6 +4,7 @@
          racket/class
          racket/math
          racket/runtime-path
+         racket/serialize
          data/interval-map
          setup/dirs
          images/icons/misc
@@ -43,7 +44,7 @@
               (define pos (file-position port))
               (list x
                     (+ (string->number first-line) pos)
-                    (read port))))))))
+                    (deserialize (read port)))))))))
 
 (define files->tag->offset #f)
 
@@ -348,9 +349,13 @@
             (define bmp-view-x (+ view-left blue-box-margin))
             (define bmp-view-y (- view-bottom blue-box-margin lock-height))
             (cond
-              [(or (bmp-bluebox-x . <= . bmp-view-x)
-                   (bmp-bluebox-y . >= . bmp-view-y))
+              [(and (bmp-bluebox-x . <= . bmp-view-x)
+                    (bmp-bluebox-y . >= . bmp-view-y))
                (values br bt bmp-view-x bmp-view-y)]
+              [(bmp-bluebox-y . >= . bmp-view-y)
+               (values br bt bmp-bluebox-x bmp-view-y)]
+              [(bmp-bluebox-x . <= . bmp-view-x)
+               (values br bt bmp-view-x bmp-bluebox-y)]
               [else
                (values br bt bmp-bluebox-x bmp-bluebox-y)])]
            [else
@@ -502,7 +507,7 @@
     (define/private (in-lock/in-read-more? evt)
       (cond
         [(send evt leaving?) (values #f #f)]
-        [(get-show-docs?)
+        [(and (get-show-docs?) (get-dc))
          (define dc-x (send evt get-x))
          (define dc-y (send evt get-y))
          (define-values (br bt bmp-x bmp-y) (get-box-upper-right-and-lock-coordinates))

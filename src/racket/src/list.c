@@ -1,6 +1,6 @@
 /*
   Racket
-  Copyright (c) 2004-2012 PLT Scheme Inc.
+  Copyright (c) 2004-2013 PLT Design Inc.
   Copyright (c) 1995-2001 Matthew Flatt
 
     This library is free software; you can redistribute it and/or
@@ -145,6 +145,7 @@ static Scheme_Object *weak_boxp(int argc, Scheme_Object *argv[]);
 static Scheme_Object *make_ephemeron(int argc, Scheme_Object *argv[]);
 static Scheme_Object *ephemeron_value(int argc, Scheme_Object *argv[]);
 static Scheme_Object *ephemeronp(int argc, Scheme_Object *argv[]);
+static Scheme_Object *impersonator_ephemeron(int argc, Scheme_Object *argv[]);
 
 static Scheme_Object *make_graph(int argc, Scheme_Object *argv[]);
 static Scheme_Object *make_placeholder(int argc, Scheme_Object *argv[]);
@@ -692,6 +693,11 @@ scheme_init_list (Scheme_Env *env)
 			     scheme_make_folding_prim(ephemeronp,
 						      "ephemeron?",
 						      1, 1, 1),
+			     env);
+  scheme_add_global_constant("impersonator-ephemeron",
+			     scheme_make_immed_prim(impersonator_ephemeron,
+                                                    "impersonator-ephemeron",
+                                                    1, 1),
 			     env);
 
   scheme_add_global_constant("make-reader-graph",
@@ -2154,7 +2160,7 @@ static Scheme_Object *hash_table_copy(int argc, Scheme_Object *argv[])
     else
       naya = scheme_make_hash_table(SCHEME_hash_ptr);
 
-    for (i = t->count; i--; ) {
+    for (i = scheme_hash_tree_next(t, -1); i != -1; i = scheme_hash_tree_next(t, i)) {
       scheme_hash_tree_index(t, i, &k, &val);
       if (!SAME_OBJ((Scheme_Object *)t, v))
         val = scheme_chaperone_hash_traversal_get(v, k, &k);
@@ -3549,6 +3555,19 @@ static Scheme_Object *ephemeronp(int argc, Scheme_Object *argv[])
   return (SAME_TYPE(SCHEME_TYPE(argv[0]), scheme_ephemeron_type)
 	  ? scheme_true 
 	  : scheme_false);
+}
+
+static Scheme_Object *impersonator_ephemeron(int argc, Scheme_Object *argv[])
+{
+  Scheme_Object *obj = argv[0];
+
+  if (SCHEME_CHAPERONEP(obj)) {
+    return scheme_make_ephemeron(SCHEME_CHAPERONE_VAL(obj), obj);
+  } else {
+    /* This is a useless ephemeron, but we create one for consistency
+       with the case that we have an impersonator: */
+    return scheme_make_ephemeron(obj, obj);
+  }
 }
 
 #ifndef MZ_PRECISE_GC

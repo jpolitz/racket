@@ -1,6 +1,6 @@
 /*
   Racket
-  Copyright (c) 2004-2012 PLT Scheme Inc.
+  Copyright (c) 2004-2013 PLT Design Inc.
   Copyright (c) 1995-2001 Matthew Flatt
 
     This library is free software; you can redistribute it and/or
@@ -267,13 +267,6 @@ THREAD_LOCAL_DECL(struct Scheme_Hash_Table *place_local_misc_table);
 extern intptr_t GC_is_place();
 #endif
 
-
-#ifdef MZ_PRECISE_GC
-extern intptr_t GC_get_memory_use(void *c);
-#else
-extern MZ_DLLIMPORT long GC_get_memory_use();
-#endif
-
 typedef struct Thread_Cell {
   Scheme_Object so;
   char inherited, assigned;
@@ -315,6 +308,11 @@ SHARED_OK static Proc_Global_Rec *process_globals;
 #if defined(MZ_USE_MZRT)
 static mzrt_mutex *process_global_lock;
 #endif
+
+typedef struct {
+  Scheme_Object so;
+  intptr_t size;
+} Scheme_Phantom_Bytes;
 
 #ifdef MZ_PRECISE_GC
 static void register_traversers(void);
@@ -391,6 +389,10 @@ static Scheme_Object *thread_set_p(int argc, Scheme_Object *argv[]);
 static Scheme_Object *current_thread_set(int argc, Scheme_Object *argv[]);
 
 static Scheme_Object *current_thread_initial_stack_size(int argc, Scheme_Object *argv[]);
+
+static Scheme_Object *phantom_bytes_p(int argc, Scheme_Object *argv[]);
+static Scheme_Object *make_phantom_bytes(int argc, Scheme_Object *argv[]);
+static Scheme_Object *set_phantom_bytes(int argc, Scheme_Object *argv[]);
 
 static void adjust_custodian_family(void *pr, void *ignored);
 
@@ -579,6 +581,10 @@ void scheme_init_thread(Scheme_Env *env)
   GLOBAL_PRIM_W_ARITY("choice-evt"                , evts_to_evt                  , 0, -1, env);
 
   GLOBAL_PARAMETER("current-thread-initial-stack-size", current_thread_initial_stack_size, MZCONFIG_THREAD_INIT_STACK_SIZE, env);
+
+  GLOBAL_PRIM_W_ARITY("phantom-bytes?", phantom_bytes_p, 1, 1, env);
+  GLOBAL_PRIM_W_ARITY("make-phantom-bytes", make_phantom_bytes, 1, 1, env);
+  GLOBAL_PRIM_W_ARITY("set-phantom-bytes!", set_phantom_bytes, 2, 2, env);
 }
 
 void scheme_init_thread_places(void) {
@@ -679,7 +685,7 @@ static Scheme_Object *collect_garbage(int c, Scheme_Object *p[])
 static Scheme_Object *current_memory_use(int argc, Scheme_Object *args[])
 {
   Scheme_Object *arg = NULL;
-  intptr_t retval = 0;
+  uintptr_t retval = 0;
 
   if (argc) {
     if (SCHEME_FALSEP(args[0])) {
@@ -700,7 +706,7 @@ static Scheme_Object *current_memory_use(int argc, Scheme_Object *args[])
   retval = GC_get_memory_use();
 #endif
   
-  return scheme_make_integer_value(retval);
+  return scheme_make_integer_value_from_unsigned(retval);
 }
 
 
@@ -4074,13 +4080,23 @@ void scheme_cancel_sleep()
 }
 
 void scheme_check_threads(void)
-/* Signals should be suspended. */
 {
-  scheme_current_thread->suspend_break++;
-  scheme_thread_block((float)0);
-  --scheme_current_thread->suspend_break;
+  double start, now;
 
-  check_sleep(have_activity, 0);
+  start = scheme_get_inexact_milliseconds();
+  
+  while (1) {
+    scheme_current_thread->suspend_break++;
+    scheme_thread_block((float)0);
+    --scheme_current_thread->suspend_break;
+    
+    if (check_sleep(have_activity, 0))
+      break;
+
+    now = scheme_get_inexact_milliseconds();
+    if (((now - start) * 1000) > MZ_THREAD_QUANTUM_USEC)
+      break;
+  }
 }
 
 void scheme_wake_up(void)
@@ -6620,8 +6636,8 @@ static Scheme_Object *do_sync(const char *name, int argc, Scheme_Object *argv[],
 
   if (syncing->result) {
     /* Apply wrap functions to the selected evt: */
-    Scheme_Object *o, *l, *a, *to_call = NULL, *args[1];
-    int to_call_is_handle = 0;
+    Scheme_Object *o, *l, *a, *to_call = NULL, *args[1], **mv = NULL;
+    int to_call_is_handle = 0, rc = 1;
 
     o = evt_set->argv[syncing->result - 1];
     if (SAME_TYPE(SCHEME_TYPE(o), scheme_channel_syncer_type)) {
@@ -6634,12 +6650,24 @@ static Scheme_Object *do_sync(const char *name, int argc, Scheme_Object *argv[],
 	for (; SCHEME_PAIRP(l); l = SCHEME_CDR(l)) {
 	  a = SCHEME_CAR(l);
 	  if (to_call) {
-	    args[0] = o;
+            if (rc == 1) {
+              mv = args;
+              args[0] = o;
+            }
 	    
 	    /* Call wrap proc with breaks disabled */
 	    scheme_push_break_enable(&cframe, 0, 0);
 	    
-	    o = scheme_apply(to_call, 1, args);
+	    o = scheme_apply_multi(to_call, rc, mv);
+
+            if (SAME_OBJ(o, SCHEME_MULTIPLE_VALUES)) {
+              rc = scheme_multiple_count;
+              mv = scheme_multiple_array;
+              scheme_detach_multple_array(mv);
+            } else {
+              rc = 1;
+              mv = NULL;
+            }
 	    
 	    scheme_pop_break_enable(&cframe, 0);
 
@@ -6652,14 +6680,20 @@ static Scheme_Object *do_sync(const char *name, int argc, Scheme_Object *argv[],
 	    }
 	    to_call = a;
 	  } else if (SAME_TYPE(scheme_thread_suspend_type, SCHEME_TYPE(a))
-		     || SAME_TYPE(scheme_thread_resume_type, SCHEME_TYPE(a)))
+		     || SAME_TYPE(scheme_thread_resume_type, SCHEME_TYPE(a))) {
 	    o = SCHEME_PTR2_VAL(a);
-	  else
+            rc = 1;
+          } else {
 	    o = a;
+            rc = 1;
+          }
 	}
 
 	if (to_call) {
-	  args[0] = o;
+          if (rc == 1) {
+            mv = args;
+            args[0] = o;
+          }
 	  
 	  /* If to_call is still a wrap-evt (not a handle-evt),
 	     then set the config one more time: */
@@ -6669,12 +6703,22 @@ static Scheme_Object *do_sync(const char *name, int argc, Scheme_Object *argv[],
 	  }
 
 	  if (tailok) {
-	    return _scheme_tail_apply(to_call, 1, args);
+	    return _scheme_tail_apply(to_call, rc, mv);
 	  } else {
-	    o = scheme_apply(to_call, 1, args);
-	    if (!to_call_is_handle)
-	      scheme_pop_break_enable(&cframe, 1);
-	    return o;
+	    o = scheme_apply_multi(to_call, rc, mv);
+
+            if (SAME_OBJ(o, SCHEME_MULTIPLE_VALUES)) {
+              rc = scheme_multiple_count;
+              mv = scheme_multiple_array;
+              scheme_detach_multple_array(mv);
+              if (!to_call_is_handle)
+                scheme_pop_break_enable(&cframe, 1);
+              return scheme_values(rc, mv);
+            } else {
+              if (!to_call_is_handle)
+                scheme_pop_break_enable(&cframe, 1);
+              return o;
+            }
 	  }
 	}
       }
@@ -6715,9 +6759,18 @@ Scheme_Object *scheme_sync_timeout(int argc, Scheme_Object *argv[])
 
 static Scheme_Object *do_scheme_sync_enable_break(const char *who, int with_timeout, int tailok, int argc, Scheme_Object *argv[])
 {
-  if (argc == 2 && SCHEME_FALSEP(argv[0]) && SCHEME_SEMAP(argv[1])) {
-    scheme_wait_sema(argv[1], -1);
-    return scheme_void;
+  Scheme_Object *sema;
+
+  if (with_timeout && (argc == 2) && SCHEME_FALSEP(argv[0]) && SCHEME_SEMAP(argv[1]))
+    sema = argv[1];
+  else if (!with_timeout && (argc == 1) && SCHEME_SEMAP(argv[0]))
+    sema = argv[0];
+  else
+    sema = NULL;
+  
+  if (sema) {
+    scheme_wait_sema(sema, -1);
+    return sema;
   }
 
   return do_sync(who, argc, argv, 1, with_timeout, tailok);
@@ -7576,7 +7629,7 @@ Scheme_Object *scheme_param_config(char *name, Scheme_Object *pos,
 static Scheme_Object *
 exact_positive_integer_p (int argc, Scheme_Object *argv[])
 {
-  Scheme_Object *n = argv[0];
+  Scheme_Object *n = argv[argc-1];
   if (SCHEME_INTP(n) && (SCHEME_INT_VAL(n) > 0))
     return scheme_true;
   if (SCHEME_BIGNUMP(n) && SCHEME_BIGPOS(n))
@@ -7591,6 +7644,58 @@ static Scheme_Object *current_thread_initial_stack_size(int argc, Scheme_Object 
 			     scheme_make_integer(MZCONFIG_THREAD_INIT_STACK_SIZE),
 			     argc, argv,
 			     -1, exact_positive_integer_p, "exact positive integer", 0);
+}
+
+static Scheme_Object *phantom_bytes_p(int argc, Scheme_Object *argv[])
+{
+  return (SAME_TYPE(SCHEME_TYPE(argv[0]), scheme_phantom_bytes_type)
+          ? scheme_true
+          : scheme_false);
+}
+
+static Scheme_Object *make_phantom_bytes(int argc, Scheme_Object *argv[])
+{
+  Scheme_Phantom_Bytes *pb;
+
+  if (!scheme_nonneg_exact_p(argv[0]))
+    scheme_wrong_contract("make-phantom-bytes", "exact-nonnegative-integer?", 0, argc, argv);
+
+  if (!SCHEME_INTP(argv[0]))
+    scheme_raise_out_of_memory("make-phantom-bytes", NULL);
+
+  pb = MALLOC_ONE_TAGGED(Scheme_Phantom_Bytes);
+  pb->so.type = scheme_phantom_bytes_type;
+  pb->size = SCHEME_INT_VAL(argv[0]);
+
+# ifdef MZ_PRECISE_GC
+  if (!GC_allocate_phantom_bytes(pb->size))
+    scheme_raise_out_of_memory("make-phantom-bytes", NULL);
+# endif
+
+  return (Scheme_Object *)pb;
+}
+
+static Scheme_Object *set_phantom_bytes(int argc, Scheme_Object *argv[])
+{
+  Scheme_Phantom_Bytes *pb;
+  intptr_t amt;
+
+  if (!SAME_TYPE(SCHEME_TYPE(argv[0]), scheme_phantom_bytes_type))
+    scheme_wrong_contract("set-phantom-bytes!", "phantom-bytes?", 0, argc, argv);
+  if (!scheme_nonneg_exact_p(argv[1]))
+    scheme_wrong_contract("set-phantom-bytes!", "exact-nonnegative-integer?", 1, argc, argv);
+
+  pb = (Scheme_Phantom_Bytes *)argv[0];
+  amt = SCHEME_INT_VAL(argv[1]);
+
+# ifdef MZ_PRECISE_GC
+  if (!GC_allocate_phantom_bytes(amt - pb->size))
+    scheme_raise_out_of_memory("make-phantom-bytes", NULL);
+# endif
+
+  pb->size = amt;
+
+  return scheme_void;
 }
 
 /*========================================================================*/
@@ -7921,10 +8026,6 @@ static Scheme_Object *will_executor_sema(Scheme_Object *w, int *repost)
 /*                         GC preparation and timing                      */
 /*========================================================================*/
 
-#ifdef MZ_XFORM
-START_XFORM_SKIP;
-#endif
-
 typedef struct Scheme_GC_Pre_Post_Callback_Desc {
   /* All pointer fields => allocate with GC_malloc() */
   Scheme_Object *boxed_key;
@@ -7973,7 +8074,7 @@ void scheme_remove_gc_callback(Scheme_Object *key)
   }
 }
 
-#if defined(_MSC_VER)
+#if defined(_MSC_VER) || defined(__MINGW32__)
 # define mzOSAPI WINAPI
 #else
 # define mzOSAPI /* empty */
@@ -8127,6 +8228,10 @@ static void run_gc_callbacks(int pre)
     desc = desc->next;
   }
 }
+
+#ifdef MZ_XFORM
+START_XFORM_SKIP;
+#endif
 
 void scheme_zero_unneeded_rands(Scheme_Thread *p)
 {

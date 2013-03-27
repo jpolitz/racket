@@ -1,5 +1,5 @@
 /****************************************************************/
-/* This command-line parser is used by both Racket and Gracket. */
+/* This command-line parser is used by both Racket and GRacket. */
 /****************************************************************/
 
 #pragma GCC diagnostic ignored "-Wwrite-strings"
@@ -73,11 +73,7 @@ static void (*console_printf)(char *str, ...);
 # define PRINTF console_printf
 #endif
 
-extern 
-# ifdef __cplusplus
-"C"
-# endif
-__declspec(dllexport) void scheme_set_dll_path(wchar_t *s);
+MZ_EXTERN void scheme_set_dll_path(wchar_t *s);
 
 static void record_dll_path(void)
 {

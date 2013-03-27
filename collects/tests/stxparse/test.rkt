@@ -79,6 +79,14 @@
              [+ (void)]
              [_ (error 'wrong)]))
 
+(test-case "datum literals"
+  (syntax-parse #'one #:datum-literals (one)
+    [one (void)]))
+(test-case "datum literals (not id=?)"
+  (let ([one 1])
+    (syntax-parse (let ([one 2]) #'one) #:datum-literals (one)
+      [one (void)])))
+
 ;; compound patterns
 (tok (a b c) (x y z)
      (and (bound (x 0) (y 0) (z 0)) (s= x 'a) (s= y 'b))
@@ -470,3 +478,8 @@
   ;; test that it works on proper lists w/ embedded stxpairs
   (check-eq? (syntax-parse #'(a b . (c  d)) [(x:id ...) #t] [_ #f]) #t)
   (check-eq? (syntax-parse #'(a b . (c  d)) [(_ x:id ...) #t] [_ #f]) #t))
+
+;; from Eric Dobson (11/30/2012)
+(terx (x y) ((~describe #:opaque "an X" x:id) n:number)
+      #rx"expected number"
+      (not #rx"expected an X"))

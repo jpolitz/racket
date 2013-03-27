@@ -100,10 +100,14 @@ uses an evaluator whose language is @racketmodname[typed/racket/base].}
 Like @racket[interaction], but without insetting the code via
 @racket[nested].}
 
+@defform[(interaction/no-prompt maybe-eval maybe-escape datum)]{
+  Like @racket[interaction], but does not render the output with a prompt.
+}
+
 @defform[(interaction-eval maybe-eval maybe-escape datum)]{
 
 Like @racket[interaction], evaluates the @racket[quote]d form of
-@racket[datum], but returns the empty string.}
+@racket[datum], but returns the empty string and does not catch errors.}
 
 
 @defform[(interaction-eval-show maybe-eval maybe-escape datum)]{
@@ -196,3 +200,12 @@ is supplied as the first argument to the parameter's value, and the
 second argument is the form to evaluate. The last argument is
 @racket[#t] if exceptions are being captured (to display exception
 results), @racket[#f] otherwise.}
+
+@defparam[scribble-exn->string handler (-> (or/c exn? any/c) string?)]{
+  A parameter that controls how exceptions are rendered by 
+  @racket[interaction]. Defaults to
+  @racketblock[(λ (e)
+                 (if (exn? e)
+                     (exn-message e)
+                     (format "uncaught exception: ~s" e)))]
+}

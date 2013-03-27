@@ -19,13 +19,13 @@
 
 ; "primitive-roots.rkt"
 (check-equal? (unit-group 20) '(1 3 7 9 11 13 17 19))  ; 19 !!!!
-(check-equal? (order 19 20) 2)
-(check-equal? (order  3 20) 4)
-(check-equal? (orders 20) '(1 4 4 2 2 4 4 2)) ; (order 3 20)=4, ...
+(check-equal? (unit-group-order 19 20) 2)
+(check-equal? (unit-group-order  3 20) 4)
+(check-equal? (unit-group-orders 20) '(1 4 4 2 2 4 4 2)) ; (unit-group-order 3 20)=4, ...
 (check-true   (andmap exists-primitive-root? '(1 2 4 3 9 6 18)))
 (check-false  (ormap  exists-primitive-root? '(8 16 12)))
 (check-equal? (primitive-root 20) #f)
-(check-equal? (primitive-root 10) 7) ; (length (unit-group 10)) = (order 7 10)
+(check-equal? (primitive-root 10) 7) ; (length (unit-group 10)) = (unit-group-order 7 10)
 (check-true   (primitive-root? 7 10))
 (check-false  (primitive-root? 7 20))
 (check-equal? (primitive-roots 10) '(3 7))
@@ -33,24 +33,24 @@
 (define (find-and-check-root n)
   (define r (primitive-root n))
   (cond [(not r) #t]
-        [else (= (length (unit-group n)) (order r n))]))
+        [else (= (length (unit-group n)) (unit-group-order r n))]))
 (check-true   (andmap find-and-check-root '(1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 78125)))
 
 ;"polygonal.rkt"
-(check-equal? (map triangle    '(0 1 2 3 4 5)) '(0 1 3  6 10 15))
-(check-equal? (map pentagonal  '(0 1 2 3 4 5)) '(0 1 5 12 22 35))
-(check-equal? (map hexagonal   '(0 1 2 3 4 5)) '(0 1 6 15 28 45))
-(check-equal? (map heptagonal  '(0 1 2 3 4 5)) '(0 1 7 18 34 55))
-(check-equal? (map octagonal   '(0 1 2 3 4 5)) '(0 1 8 21 40 65))
-(check-true   (andmap triangle?    '(0 1 3  6 10 15)))
-(check-true   (andmap square?      '(0 1 4  9 16 25)))
-(check-true   (andmap pentagonal?  '(0 1 5 12 22 35)))
-(check-true   (andmap hexagonal?   '(0 1 6 15 28 45)))
-(check-true   (andmap heptagonal?  '(0 1 7 18 34 55)))
-(check-true   (andmap octagonal?   '(0 1 8 21 40 65)))
+(check-equal? (map triangle-number    '(0 1 2 3 4 5)) '(0 1 3  6 10 15))
+(check-equal? (map pentagonal-number  '(0 1 2 3 4 5)) '(0 1 5 12 22 35))
+(check-equal? (map hexagonal-number   '(0 1 2 3 4 5)) '(0 1 6 15 28 45))
+(check-equal? (map heptagonal-number  '(0 1 2 3 4 5)) '(0 1 7 18 34 55))
+(check-equal? (map octagonal-number   '(0 1 2 3 4 5)) '(0 1 8 21 40 65))
+(check-true   (andmap triangle-number?    '(0 1 3  6 10 15)))
+(check-true   (andmap square-number?      '(0 1 4  9 16 25)))
+(check-true   (andmap pentagonal-number?  '(0 1 5 12 22 35)))
+(check-true   (andmap hexagonal-number?   '(0 1 6 15 28 45)))
+(check-true   (andmap heptagonal-number?  '(0 1 7 18 34 55)))
+(check-true   (andmap octagonal-number?   '(0 1 8 21 40 65)))
 
 ; "farey.rkt"
-(check-equal? (farey 5) '(0 1/5 1/4 1/3 2/5 1/2 3/5 2/3 3/4 4/5 1))
+(check-equal? (farey-sequence 5) '(0 1/5 1/4 1/3 2/5 1/2 3/5 2/3 3/4 4/5 1))
 (check-equal? (mediant 1/1 1/2) 2/3)
 
 ; "fibonacci.rkt"
@@ -59,16 +59,16 @@
 (for*: ([a  (in-range -5 6)]
         [b  (in-range -5 6)]
         [mod  (in-range 1 8)])
-  (check-equal? (build-list 20 (λ: ([n : Integer]) ((make-fibonacci/mod a b) n mod)))
+  (check-equal? (build-list 20 (λ: ([n : Integer]) ((make-modular-fibonacci a b) n mod)))
                 (build-list 20 (λ: ([n : Integer]) (modulo ((make-fibonacci a b) n) mod)))))
 
 ; "partitions.rkt"
-(check-equal? (map partition-count '(0 1 2 3 4 5 6 7 8 9 10))
+(check-equal? (map partitions '(0 1 2 3 4 5 6 7 8 9 10))
               '(1 1 2 3 5 7 11 15 22 30 42))
 
 
 ; "bernoulli.rkt"
-(check-equal? (map bernoulli '(0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18))
+(check-equal? (map bernoulli-number '(0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18))
               '(1 -1/2 1/6 0 -1/30 0 1/42 0 -1/30 0 5/66 0 -691/2730 0 7/6 0 -3617/510 0 43867/798))
 
 ; "tangent-number.rkt"
@@ -100,7 +100,9 @@
 (check-equal? (permutations 10 10) 3628800)
 (check-equal? (permutations 0 0) 1)
 
-(check-equal? (multinomial 20 3 4 5 8) 3491888400)
+(check-equal? (multinomial 20 '(3 4 5 8)) 3491888400)
+(check-equal? (multinomial 0 '()) 1)
+(check-equal? (multinomial 4 '(1 1)) 0)
 
 ; "binomial.rkt"
 (check-equal? (binomial 10 3) 120)

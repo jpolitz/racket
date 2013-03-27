@@ -40,7 +40,8 @@
       close
       get-filename/untitled-name
       
-      get-pos/text))
+      get-pos/text
+      get-pos/text-dc-location))
   
   (define basic-mixin
     (mixin (editor<%>) (basic<%>)
@@ -148,14 +149,9 @@
               #t))))
       
       (define/private (format-error-message exn)
-        (let ([sp (open-output-string)])
-          (parameterize ([current-output-port sp])
-            ((error-display-handler)
-             (if (exn? exn)
-                 (format "~a" (exn-message exn))
-                 (format "uncaught exn: ~s" exn))
-             exn))
-          (get-output-string sp)))
+        (if (exn? exn)
+            (format "~a" (exn-message exn))
+            (format "uncaught exn: ~s" exn)))
       
       (inherit refresh-delayed? 
                get-canvas
@@ -405,11 +401,30 @@
       (set-style-list standard-style-list)
       (set-load-overwrites-styles #f)))
   
+    
+  ;; the 'set-font-size' function can be slow,
+  ;; as it involves redrawing every frame
+  ;; so we do the change on a low-priority
+  ;; callback so we don't get too many of these
+  ;; piling up.
+  (define (set-font-size/callback size)
+    (set! set-font-size-callback-size size)
+    (unless set-font-size-callback-running?
+      (set! set-font-size-callback-running? #t)
+      (queue-callback
+       (λ ()
+         (set-font-size set-font-size-callback-size)
+         (set! set-font-size-callback-running? #f))
+       #f)
+      (set! set-font-size-callback-running? #t)))  
+  (define set-font-size-callback-running? #f)
+  (define set-font-size-callback-size #f)
+
   (define (set-standard-style-list-pref-callbacks)
     (set-font-size (preferences:get 'framework:standard-style-list:font-size))
     (set-font-name (preferences:get 'framework:standard-style-list:font-name))
     (set-font-smoothing (preferences:get 'framework:standard-style-list:smoothing))
-    (preferences:add-callback 'framework:standard-style-list:font-size (λ (p v) (set-font-size v)))
+    (preferences:add-callback 'framework:standard-style-list:font-size (λ (p v) (set-font-size/callback v)))
     (preferences:add-callback 'framework:standard-style-list:font-name (λ (p v) (set-font-name v)))
     (preferences:add-callback 'framework:standard-style-list:smoothing (λ (p v) (set-font-smoothing v)))
     
@@ -544,18 +559,24 @@
             #t))
       (define/public (backup?) (preferences:get 'framework:backup-files?))
       (define/augment (on-save-file name format)
-        (set! auto-save-error? #f)
         (when (and (backup?)
                    (not (eq? format 'copy))
                    (file-exists? name))
           (let ([back-name (path-utils:generate-backup-name name)])
             (when (or (not (file-exists? back-name))
                       (file-old? back-name))
-              (when (file-exists? back-name)
-                (delete-file back-name))
-              (with-handlers ([(λ (x) #t) void])
+              (with-handlers ([exn:fail? 
+                               (λ (exn)
+                                 (log-debug "failed to clean up autosave file.1: ~a" back-name))])
+                (when (file-exists? back-name)
+                  (delete-file back-name))
                 (copy-file name back-name)))))
         (inner (void) on-save-file name format))
+      (define/augment (after-save-file success?)
+        (when success?
+          (set! auto-save-error? #f))
+        (inner (void) after-save-file success?))
+
       (define/augment (on-close)
         (remove-autosave)
         (set! do-autosave? #f)
@@ -634,9 +655,13 @@
       (define/public (remove-autosave)
         (when auto-saved-name
           (when (file-exists? auto-saved-name)
-            (delete-file auto-saved-name))
-          (set! auto-saved-name #f)))
-      (super-instantiate ())
+            (with-handlers ([exn:fail? 
+                             (λ (exn)
+                               (log-debug "failed to clean up autosave file.2: ~a" 
+                                          auto-saved-name))])            
+              (delete-file auto-saved-name)
+              (set! auto-saved-name #f)))))
+      (super-new)
       (autosave:register this)))
   
   (define info<%> (interface (basic<%>)))

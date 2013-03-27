@@ -27,8 +27,8 @@ extern "C" {
 
 #if defined(MZ_USE_PLACES) || defined(MZ_USE_FUTURES)
 # define USE_THREAD_LOCAL
-# if _MSC_VER
-#  ifdef _WIN64
+# ifdef _WIN32
+#  if defined(_WIN64) && !defined(__MINGW32__)
 #   define THREAD_LOCAL __declspec(thread)
 #   define MZ_THREAD_EXTERN extern
 #   define IMPLEMENT_THREAD_LOCAL_EXTERNALLY_VIA_PROC
@@ -54,7 +54,7 @@ extern "C" {
     && !defined(SCHEME_EMBEDDED_NO_DLL)
 # define MZ_DLLIMPORT __declspec(dllimport)
 # define MZ_DLLEXPORT __declspec(dllexport)
-# ifdef __mzscheme_private__
+# if defined(__mzscheme_private__) || defined(__MINGW32_DELAY_LOAD__)
 #  define MZ_DLLSPEC __declspec(dllexport)
 # else
 #  define MZ_DLLSPEC __declspec(dllimport)
@@ -163,6 +163,10 @@ typedef struct Thread_Local_Variables {
   void *retry_alloc_r1_;
   double scheme_jit_save_fp_;
   double scheme_jit_save_fp2_;
+#ifdef MZ_LONG_DOUBLE
+  mz_long_double scheme_jit_save_extfp_;
+  mz_long_double scheme_jit_save_extfp2_;
+#endif
   struct Scheme_Bucket_Table *starts_table_;
   struct Scheme_Bucket_Table *submodule_empty_modidx_table_;
   struct Scheme_Modidx *modidx_caching_chain_;
@@ -337,6 +341,7 @@ typedef struct Thread_Local_Variables {
   struct Evt **place_evts_;
   struct Scheme_Place_Object *place_object_;
   struct Scheme_Place *all_child_places_;
+  struct Scheme_Place_Bi_Channel_Link *place_channel_links_;
   struct Scheme_Object **reusable_ifs_stack_;
   struct Scheme_Object *empty_self_shift_cache_;
   struct Scheme_Bucket_Table *scheme_module_code_cache_;
@@ -418,6 +423,31 @@ MZ_EXTERN uintptr_t scheme_tls_delta;
 MZ_EXTERN int scheme_tls_index;
 #  endif
 static __inline Thread_Local_Variables **scheme_get_thread_local_variables_ptr(void) {
+# ifdef __MINGW32__
+  Thread_Local_Variables **x;
+#  ifdef _WIN64
+  asm (
+       "mov %%gs:(0x58), %%rax;"
+       "mov (%%rax), %%rax;"
+       "add %1, %%rax;"
+       "mov %%rax, %0;"
+       :"=r"(x)        /* output */
+       :"r"(scheme_tls_delta)
+       :"%rax"  /* clobbered register */
+       );
+#  else
+  asm (
+       "mov %%fs:(0x2C), %%eax;"
+       "mov (%%eax), %%eax;"
+       "add %1, %%eax;"
+       "mov %%eax, %0;"
+       :"=r"(x)        /* output */
+       :"r"(scheme_tls_delta)
+       :"%eax"  /* clobbered register */
+       );
+#  endif
+  return x;
+# else
   __asm { mov eax, FS:[0x2C]
 #  ifdef MZ_USE_WIN_TLS_VIA_DLL
           add eax, scheme_tls_index
@@ -425,6 +455,7 @@ static __inline Thread_Local_Variables **scheme_get_thread_local_variables_ptr(v
           mov eax, [eax]
           add eax, scheme_tls_delta }
   /* result is in eax */
+# endif
 }
 static __inline Thread_Local_Variables *scheme_get_thread_local_variables(void) {
   return *scheme_get_thread_local_variables_ptr();
@@ -517,6 +548,10 @@ XFORM_GC_VARIABLE_STACK_THROUGH_THREAD_LOCAL;
 #define retry_alloc_r1 XOA (scheme_get_thread_local_variables()->retry_alloc_r1_)
 #define scheme_jit_save_fp XOA (scheme_get_thread_local_variables()->scheme_jit_save_fp_)
 #define scheme_jit_save_fp2 XOA (scheme_get_thread_local_variables()->scheme_jit_save_fp2_)
+#ifdef MZ_LONG_DOUBLE
+#define scheme_jit_save_extfp XOA (scheme_get_thread_local_variables()->scheme_jit_save_extfp_)
+#define scheme_jit_save_extfp2 XOA (scheme_get_thread_local_variables()->scheme_jit_save_extfp2_)
+#endif
 #define starts_table XOA (scheme_get_thread_local_variables()->starts_table_)
 #define submodule_empty_modidx_table XOA (scheme_get_thread_local_variables()->submodule_empty_modidx_table_)
 #define modidx_caching_chain XOA (scheme_get_thread_local_variables()->modidx_caching_chain_)
@@ -686,6 +721,7 @@ XFORM_GC_VARIABLE_STACK_THROUGH_THREAD_LOCAL;
 #define place_evts XOA (scheme_get_thread_local_variables()->place_evts_)
 #define place_object XOA (scheme_get_thread_local_variables()->place_object_)
 #define all_child_places XOA (scheme_get_thread_local_variables()->all_child_places_)
+#define place_channel_links XOA (scheme_get_thread_local_variables()->place_channel_links_)
 #define reusable_ifs_stack XOA (scheme_get_thread_local_variables()->reusable_ifs_stack_)
 #define empty_self_shift_cache XOA (scheme_get_thread_local_variables()->empty_self_shift_cache_)
 #define scheme_module_code_cache XOA (scheme_get_thread_local_variables()->scheme_module_code_cache_)

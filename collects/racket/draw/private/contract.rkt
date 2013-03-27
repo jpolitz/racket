@@ -8,6 +8,7 @@
          "point.rkt"
          "font.rkt"
          "font-dir.rkt"
+         "font-syms.rkt"
          "pen.rkt"
          "brush.rkt"
          "gradient.rkt"
@@ -22,7 +23,35 @@
          "gl-config.rkt"
          "gl-context.rkt")
 
-(provide (all-defined-out))
+(provide brush-style/c
+         pen-cap-style/c
+         pen-join-style/c
+         pen-style/c
+         font-family/c
+         font-weight/c
+         font-style/c
+         transformation-vector/c
+         make-color/c
+         make-brush/c
+         make-pen/c
+         color%/c
+         point%/c
+         font%/c
+         pen%/c
+         pen-list%/c
+         brush%/c
+         brush-list%/c
+         linear-gradient%/c
+         radial-gradient%/c
+         bitmap-dc%/c
+         post-script-dc%/c
+         pdf-dc%/c
+         svg-dc%/c
+         record-dc%/c
+         region%/c
+         dc-path%/c
+         gl-config%/c
+         bitmap%/c)
 
 ;; dummy values to avoid cycles
 (define-values (frame% dialog%) (values object% object%))
@@ -45,13 +74,6 @@
         'dot 'long-dash 'short-dash 'dot-dash
         'xor-dot 'xor-long-dash 'xor-short-dash
         'xor-dot-dash))
-
-(define font-family/c
-  (or/c 'default 'decorative 'roman 'script
-        'swiss 'modern 'symbol 'system))
-
-(define font-weight/c (or/c 'normal 'bold 'light))
-(define font-style/c  (or/c 'normal 'italic 'slant))
 
 (define transformation-vector/c
   (vector/c (vector/c real? real? real? real? real? real?)
@@ -107,17 +129,15 @@
 (define font%/c
   (class/c
     (get-face (->m (or/c string? #f)))
-    (get-family (->m (or/c 'default 'decorative 'roman 'script
-                           'swiss 'modern 'symbol 'system)))
+    (get-family (->m font-family/c))
     (get-font-id (->m exact-integer?))
-    (get-hinting (->m (or/c 'aligned 'unaligned)))
+    (get-hinting (->m font-hinting/c))
     (get-point-size (->m (integer-in 1 255)))
     (get-size-in-pixels (->m boolean?))
-    (get-smoothing (->m (or/c 'default 'partly-smoothed
-                              'smoothed 'unsmoothed)))
-    (get-style (->m (or/c 'normal 'italic 'slant)))
+    (get-smoothing (->m font-smoothing/c))
+    (get-style (->m font-style/c))
     (get-underlined (->m boolean?))
-    (get-weight (->m (or/c 'normal 'bold 'light)))
+    (get-weight (->m font-weight/c))
     (screen-glyph-exists? (->*m (char?) (any/c) boolean?))))
 
 (define pen%/c

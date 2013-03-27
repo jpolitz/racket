@@ -14,14 +14,6 @@
  (rename-in (types abbrev numeric-tower union) [make-arr* make-arr])
  (for-syntax racket/base syntax/parse (only-in racket/syntax syntax-local-eval)))
 
-(define-syntax (define-initial-env stx)
-  (syntax-parse stx
-    [(_ initialize-env [id-expr ty] ...)
-     #`(begin
-         (define initial-env (make-env [id-expr (λ () ty)] ... ))
-         (define (initialize-env) (initialize-type-env initial-env))
-         (provide initialize-env))]))
-
 (define (make-template-identifier what where)
   (let ([name (module-path-index-resolve (module-path-index-join where #f))])
     (parameterize ([current-namespace (make-empty-namespace)])
@@ -92,7 +84,8 @@
           (->opt -Real -Real [-Real] (-seq -Real)))]
   ;; in-naturals
   [(make-template-identifier 'in-naturals 'racket/private/for)
-   (cl->* (-> -PosInt (-seq -PosInt))
+   (cl->* (-> (-seq -Nat))
+          (-> -PosInt (-seq -PosInt))
           (-> -Int (-seq -Nat)))]
   ;; in-list
   [(make-template-identifier 'in-list 'racket/private/for)

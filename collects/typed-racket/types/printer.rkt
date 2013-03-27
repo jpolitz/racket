@@ -83,6 +83,7 @@
   (match c
     [(CarPE:) (fp "car")]
     [(CdrPE:) (fp "cdr")]
+    [(ForcePE:) (fp "force")]
     [(StructPE: t i) (fp "(~a ~a)" t i)]
     [else (fp "(Unknown Path Element: ~a)" (struct->vector c))]))
 
@@ -164,6 +165,8 @@
        (fp "~a ...~a~a "
            (car drest) (if (special-dots-printing?) "" " ") (cdr drest)))
      (match rng
+       [(AnyValues:)
+        (fp "-> AnyValues")]
        [(Values: (list (Result: t (FilterSet: (Top:) (Top:)) (Empty:))))
         (fp "-> ~a" t)]
        [(Values: (list (Result: t
@@ -226,6 +229,8 @@
     [(ThreadCellTop:) (fp "ThreadCell")]
     [(VectorTop:) (fp "Vector")]
     [(MPairTop:) (fp "MPair")]
+    [(Prompt-TagTop:) (fp "Prompt-Tag")]
+    [(Continuation-Mark-KeyTop:) (fp "Continuation-Mark-Key")]
     [(App: rator rands stx)
      (fp "~a" (list* rator rands))]
     ;; special cases for lists
@@ -252,10 +257,10 @@
     [(Function: arities) (fp "~a" (print-case-lambda c))]
     [(arr: _ _ _ _ _) (fp "(arr ~a)" (format-arr c))]
     [(Vector: e) (fp "(Vectorof ~a)" e)]
-    [(HeterogenousVector: e) (fp "(Vector")
-                             (for ([i (in-list e)])
-                               (fp " ~a" i))
-                             (fp ")")]
+    [(HeterogeneousVector: e) (fp "(Vector")
+                              (for ([i (in-list e)])
+                                (fp " ~a" i))
+                              (fp ")")]
     [(Box: e) (fp "(Boxof ~a)" e)]
     [(Future: e) (fp "(Futureof ~a)" e)]
     [(Channel: e) (fp "(Channelof ~a)" e)]
@@ -269,7 +274,8 @@
     [(ListDots: dty dbound)
      (fp "(List ~a ...~a~a)" dty (if (special-dots-printing?) "" " ") dbound)]
     [(F: nm) (fp "~a" nm)]
-    ;; FIXME
+    ;; FIXME (Values are not types and shouldn't need to be considered here
+    [(AnyValues:) (fp "AnyValues")]
     [(Values: (list v)) (fp "~a" v)]
     [(Values: (list v ...)) (fp "~s" (cons 'values v))]
     [(ValuesDots: v dty dbound)
@@ -279,7 +285,10 @@
          (fp "(Parameterof ~a)" in)
          (fp "(Parameterof ~a ~a)" in out))]
     [(Hashtable: k v) (fp "(HashTable ~a ~a)" k v)]
-
+    [(Continuation-Mark-Keyof: rhs)
+     (fp "(Continuation-Mark-Keyof ~a)" rhs)]
+    [(Prompt-Tagof: body handler)
+     (fp "(Prompt-Tagof ~a ~a)" body handler)]
     #;[(Poly-unsafe: n b) (fp "(unsafe-poly ~a ~a ~a)" (Type-seq c) n b)]
     [(Poly-names: names body)
      #;(eprintf "POLY SEQ: ~a\n" (Type-seq body))

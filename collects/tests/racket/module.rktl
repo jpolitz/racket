@@ -860,22 +860,26 @@
   (define am-s (compile-m (a-expr #t) '()))
   (define b-s (compile-m b-expr (list a-s)))
 
+  (define temp-dir (find-system-path 'temp-dir))
+  (define dir (build-path temp-dir "compiled"))
+  (define dir-existed? (directory-exists? dir))
+  (unless dir-existed? (make-directory dir))
+
   (define (go a-s)
-    (parameterize ([current-namespace (make-base-namespace)])
-      (parameterize ([read-accept-compiled #t])
-        (eval (read (open-input-bytes a-s)))
-        (define temp-dir (find-system-path 'temp-dir))
-        (define dir (build-path temp-dir "compiled"))
-        (make-directory* dir)
-        (with-output-to-file (build-path dir "check-gen_rkt.zo")
-          #:exists 'truncate
-          (lambda () (write-bytes b-s)))
-        ((dynamic-require (build-path temp-dir "check-gen.rkt") 'b) 10)
-        (delete-file (build-path dir "check-gen_rkt.zo")))))
+    (parameterize ([current-namespace (make-base-namespace)]
+                   [read-accept-compiled #t])
+      (eval (read (open-input-bytes a-s)))
+      (with-output-to-file (build-path dir "check-gen_rkt.zo")
+        #:exists 'truncate
+        (lambda () (write-bytes b-s)))
+      ((dynamic-require (build-path temp-dir "check-gen.rkt") 'b) 10)))
   ;; Triger JIT generation with constant function as `a':
   (go a-s)
   ;; Check that we don't crash when trying to use a different `a':
-  (err/rt-test (go am-s) exn:fail?))
+  (err/rt-test (go am-s) exn:fail?)
+  ;; Cleanup
+  (delete-file (build-path dir "check-gen_rkt.zo"))
+  (unless dir-existed? (delete-directory dir)))
 
 ;; ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -926,6 +930,54 @@
          (require 'm))))
     (eval '(require 'n)))
   (test #"1\n1\n" get-output-bytes o))
+
+;; ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; check re-expansion of a module with a macro-introduced `only-in'
+;; and a definition of the name that `only-in' switched away from:
+
+(parameterize ([current-namespace (make-base-namespace)])
+  (define src
+    '(module m racket
+       (define-syntax (req stx)
+         (syntax-case stx ()
+           [(_ spec)
+            (let ()
+              (with-syntax {[name (datum->syntax #'spec 'enqueue!)]}
+                #'(begin
+                    (require (rename-in spec [name temp]))
+                    (define-syntax name 10))))]))
+       
+       (req (only-in data/queue enqueue!))))
+  (expand-syntax (expand src)))
+
+;; ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; catch errors due to a module that is not available
+
+(module avail-z racket/base
+  (provide foo)
+  (define-syntax-rule (foo x) x))
+
+(module avail-y racket/base
+  (require 'avail-z)
+  (eval #'(foo 10)))
+
+(err/rt-test (dynamic-require ''avail-y #f)
+             (lambda (exn) (and (exn? exn)
+                                (regexp-match? #rx"module that is not available"
+                                               (exn-message exn)))))
+
+;; ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Check that a `syntax-local-ift-require' into a top-level context
+;; appropriately forces a visit of compile-time code:
+
+(parameterize ([current-namespace (make-base-namespace)])
+  (eval '(module m racket/base
+           (provide x)
+           (define-syntax-rule (x) 5)))
+  (eval '(require (for-syntax racket/base)))
+  (eval '(define-syntax (m stx)
+           (syntax-local-lift-require ''m (datum->syntax stx '(x)))))
+  (eval '(m)))
   
 ;; ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 

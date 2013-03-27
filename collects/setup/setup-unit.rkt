@@ -649,7 +649,13 @@
         (define fn (build-path p "info-domain" "compiled" "cache.rktd"))
         (when (file-exists? fn)
           (with-handlers ([exn:fail:filesystem? (warning-handler (void))])
-            (with-output-to-file fn void #:exists 'truncate/replace))))))
+            (with-output-to-file fn void #:exists 'truncate/replace))))
+      (setup-printf #f "deleting documentation databases")
+      (for ([d (in-list (list (find-doc-dir) (find-user-doc-dir)))])
+        (when d
+          (define f (build-path d "docindex.sqlite"))
+          (when (file-exists? f)
+            (delete-file f))))))
 
   (define (do-install-part part)
     (when (if (eq? part 'post) (call-post-install) (call-install))
@@ -970,7 +976,9 @@
             (with-output-to-file p #:exists 'truncate/replace
               (lambda ()
                 (write (hash-map ht cons))
-                (newline))))))))
+                (newline)))))))
+    ;; Flush cached state in the current namespace:
+    (reset-relevant-directories-state!))
 
   ;; ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
   ;;                       Docs                    ;;
@@ -998,9 +1006,7 @@
     (set-doc:verbose)
     (with-handlers ([exn:fail?
                      (lambda (exn)
-                       (setup-printf #f "docs failure: ~a" (exn->string exn))
-                       (for ([x (in-list (continuation-mark-set->context (exn-continuation-marks exn)))])
-                         (setup-printf #f "~s" x)))])
+                       (setup-printf #f "docs failure: ~a" (exn->string exn)))])
       (define auto-start-doc?
         (and (not (null? (archives)))
              (archive-implies-reindex)))

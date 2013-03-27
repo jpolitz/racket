@@ -1,6 +1,6 @@
 /*
   Racket
-  Copyright (c) 2004-2012 PLT Scheme Inc.
+  Copyright (c) 2004-2013 PLT Design Inc.
   Copyright (c) 1995-2001 Matthew Flatt
   All rights reserved.
 
@@ -161,6 +161,7 @@ void (*scheme_log_w_data)(Scheme_Logger *logger, int level, int flags,
                                  Scheme_Object *data,
                                  const char *msg, ...);
 void (*scheme_log_message)(Scheme_Logger *logger, int level, char *buffer, intptr_t len, Scheme_Object *data);
+void (*scheme_log_name_message)(Scheme_Logger *logger, int level, Scheme_Object *name, char *buffer, intptr_t len, Scheme_Object *data);
 void (*scheme_log_abort)(char *buffer);
 void (*scheme_log_warning)(char *buffer);
 void (*scheme_glib_log_message)(const char *log_domain, int log_level, const char *message, void *user_data);
@@ -484,6 +485,9 @@ Scheme_Object *(*scheme_append_char_string)(Scheme_Object *, Scheme_Object *);
 mzchar *(*scheme_string_recase)(mzchar *s, int d, int len, int mode, int inplace, int *_len);
 Scheme_Object *(*scheme_make_vector)(intptr_t size, Scheme_Object *fill);
 Scheme_Double_Vector *(*scheme_alloc_flvector)(intptr_t size);
+#ifdef MZ_LONG_DOUBLE
+Scheme_Long_Double_Vector *(*scheme_alloc_extflvector)(intptr_t size);
+#endif
 Scheme_Vector *(*scheme_alloc_fxvector)(intptr_t size);
 Scheme_Object *(*scheme_make_integer_value)(intptr_t i);
 Scheme_Object *(*scheme_make_integer_value_from_unsigned)(uintptr_t i);
@@ -492,6 +496,9 @@ Scheme_Object *(*scheme_make_integer_value_from_unsigned_long_long)(umzlonglong 
 Scheme_Object *(*scheme_make_integer_value_from_long_halves)(uintptr_t lowhalf, uintptr_t hihalf);
 Scheme_Object *(*scheme_make_integer_value_from_unsigned_long_halves)(uintptr_t lowhalf, uintptr_t hihalf);
 Scheme_Object *(*scheme_make_double)(double d);
+#ifdef MZ_LONG_DOUBLE
+Scheme_Object *(*scheme_make_long_double)(mz_long_double d);
+#endif
 #ifdef MZ_USE_SINGLE_FLOATS
 Scheme_Object *(*scheme_make_float)(float f) ;
 #endif
@@ -510,6 +517,9 @@ int (*scheme_get_unsigned_int_val)(Scheme_Object *o, uintptr_t *v);
 int (*scheme_get_long_long_val)(Scheme_Object *o, mzlonglong *v);
 int (*scheme_get_unsigned_long_long_val)(Scheme_Object *o, umzlonglong *v);
 double (*scheme_real_to_double)(Scheme_Object *r);
+#ifdef MZ_LONG_DOUBLE
+mz_long_double (*scheme_real_to_long_double)(Scheme_Object *r);
+#endif
 Scheme_Object *(*scheme_make_cptr)(void *cptr, Scheme_Object *typetag);
 Scheme_Object *(*scheme_make_offset_cptr)(void *cptr, intptr_t offset, Scheme_Object *typetag);
 Scheme_Object *(*scheme_make_external_cptr)(void *cptr, Scheme_Object *typetag);
@@ -560,6 +570,10 @@ Scheme_Object *(*scheme_make_bignum_from_long_long)(mzlonglong v);
 Scheme_Object *(*scheme_make_bignum_from_unsigned_long_long)(umzlonglong v);
 double (*scheme_bignum_to_double)(const Scheme_Object *n);
 Scheme_Object *(*scheme_bignum_from_double)(double d);
+#ifdef MZ_LONG_DOUBLE
+mz_long_double (*scheme_bignum_to_long_double)(const Scheme_Object *n);
+Scheme_Object *(*scheme_bignum_from_long_double)(mz_long_double d);
+#endif
 #ifdef MZ_USE_SINGLE_FLOATS
 float (*scheme_bignum_to_float)(const Scheme_Object *n);
 Scheme_Object *(*scheme_bignum_from_float)(float d);
@@ -578,6 +592,10 @@ Scheme_Object *(*scheme_bignum_normalize)(const Scheme_Object *n);
 Scheme_Object *(*scheme_make_rational)(const Scheme_Object *r, const Scheme_Object *d);
 double (*scheme_rational_to_double)(const Scheme_Object *n);
 Scheme_Object *(*scheme_rational_from_double)(double d);
+#ifdef MZ_LONG_DOUBLE
+mz_long_double (*scheme_rational_to_long_double)(const Scheme_Object *n);
+Scheme_Object *(*scheme_rational_from_long_double)(mz_long_double d);
+#endif
 #ifdef MZ_USE_SINGLE_FLOATS
 float (*scheme_rational_to_float)(const Scheme_Object *n);
 Scheme_Object *(*scheme_rational_from_float)(float d);

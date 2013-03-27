@@ -5,7 +5,7 @@
          "factorial.rkt"
          "binomial.rkt")
 
-(provide bernoulli)
+(provide bernoulli-number)
 
 ;; Number of globally memoized Bernoulli numbers
 (define num-global-bs 200)
@@ -56,11 +56,11 @@
          (for/fold: ([sum : Exact-Rational  0]
                      [bin : Integer  (binomial (+ m 3) m-6)]
                      ) ([j  (in-range 1 (+ M 1))])
-           (values (+ sum (* bin (bern (- m (* 6 j)))))
+           (values (+ sum (* bin (bern (assert (- m (* 6 j)) natural?))))
                    (next-binom bin (+ m 3) (- m (* 6 j))))))
        sum]))
   
-  (: bern : Integer -> Exact-Rational)
+  (: bern : Natural -> Exact-Rational)
   (define (bern n)
     (bs-ref!
      n (λ ()
@@ -76,7 +76,7 @@
               [else  (error 'unreachable-code)])]))))
   (bern n))
 
-(: bernoulli (Integer -> Exact-Rational))
-(define (bernoulli n)
-  (cond [(n . < . 0)  (raise-argument-error 'bernoulli "Natural" n)]
+(: bernoulli-number (Integer -> Exact-Rational))
+(define (bernoulli-number n)
+  (cond [(n . < . 0)  (raise-argument-error 'bernoulli-number "Natural" n)]
         [else  (bernoulli* n)]))

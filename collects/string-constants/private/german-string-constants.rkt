@@ -30,6 +30,7 @@
  (stop "Stop")
  (&stop "&Stop") ;; for use in button and menu item labels, with short cut.
  (are-you-sure-delete? "Sind Sie sicher, dass Sie ~a löschen wollen?") ;; ~a is a filename or directory name
+ (are-you-sure-replace? "Sind Sie sicher, dass Sie ~a ersetzen wollen?") ;; ~a is a filename or directory name
  (ignore "Ignorieren")
  (revert "Änderungen rückgängig machen")
 
@@ -94,6 +95,7 @@
  (cs-jump-to-next-bound-occurrence "Zum nächsten gebundenen Vorkommen springen")
  (cs-jump-to-binding "Zu bindendem Vorkommen springen")
  (cs-jump-to-definition "Zu Definition springen")
+ (cs-open-defining-file "Datei mit Definition öffnen")
  (cs-error-message "Fehlermeldung")
  (cs-open-file "~a öffnen")
  (cs-rename-var "~a umbenennen")
@@ -149,6 +151,9 @@
  (online-expansion-pending "Hintergrund-Expansion läuft ...")
  (online-expansion-finished "Hintergrund-Expansion fertig") ;; note: there may still be errors in this case
  
+ ; the next two show up in a menu when you click on the circle in the bottom right corner
+ (disable-online-expansion "Hintergrund-Expansion deaktivieren")
+ (enable-online-expansion "Hintergrund-Expansion aktivieren")
  ;; the online expansion preferences pane
  (online-expansion "Hintergrund-Expansion") ;; title of prefs pane
  ; the different kinds of errors
@@ -158,6 +163,8 @@
  ; locations the errors can be shown
  (online-expansion-error-gold-highlight "mit goldener Markierung")
  (online-expansion-error-margin "am Rand")
+ ; the label of a preference in the (string-constant online-expansion) section
+ (show-arrows-on-mouseover "Bindungen und Tail-Positionen unter Mauszeiger anzeigen")
  ;;; info bar at botttom of drscheme frame
  (collect-button-label "GC")
  (read-only "Nur Lesen")
@@ -208,7 +215,8 @@
   ;; menu items connected to the logger -- also in a button in the planet status line in the drs frame
   (show-log "&Log einblenden")
   (hide-log "&Log ausblenden")
-  (logging-all "Alle") ;; in the logging window in drscheme, shows all logs simultaneously
+  (logger-scroll-on-output "Bei Ausgabe scrollen") ; a checkbox in the logger pane
+  (log-messages "Log-Nachrichten") ;; label for the drracket logging gui panel
 
  ;; modes
  (mode-submenu-label "Modi")
@@ -221,6 +229,7 @@
  (scheme-mode-color-string "Zeichenkette")
  (scheme-mode-color-constant "Literal")
  (scheme-mode-color-parenthesis "Klammer")
+ (scheme-mode-color-hash-colon-keyword "#:Keyword")
  (scheme-mode-color-error "Fehler")
  (scheme-mode-color-other "Sonstiges")
  (syntax-coloring-choose-color "Wählen Sie eine Farbe für ~a")
@@ -457,6 +466,10 @@
  (example-text "Beispieltext:")
  (only-warn-once "Nur einmal warnen, wenn Definitionen und Interaktionen nicht synchron sind")
  
+ ; font size menu items in the 'view' menu; the ~a is filled with a number (font size)
+ (increase-font-size "Schrift vergrößern (auf ~a)")
+ (decrease-font-size "Schrift verkleinern (auf ~a)")
+
  ; warning message when lockfile is around
  (waiting-for-pref-lock "Auf Lock-Datei für Einstellungen warten...")
  (pref-lock-not-gone
@@ -829,6 +842,7 @@
  (interactions-menu-item-help-string "Interaktionsfenster ein-/ausblenden")
  (toolbar "Toolbar")
  (toolbar-on-top "Toolbar oben")
+ (toolbar-on-top-no-label "Toolbar oben mit kleinen Knöpfen")
  (toolbar-on-left "Toolbar links")
  (toolbar-on-right "Toolbar rechts")
  (toolbar-hidden "Toolbar ausblenden")
@@ -873,6 +887,12 @@
  (limit-memory-limited "einschränken")
  (limit-memory-megabytes "Megabytes")
 
+ ; the next two constants are used together in the limit memory dialog; they are inserted
+ ; one after another. The first one is shown in a bold font and the second is not.
+ ; (the first can be the empty string)
+ (limit-memory-warning-prefix "Warning: ")
+ (limit-memory-warning "Die Einstellung für uneingeschränkten Speicherverbrauch ist unsicher. Mit dieser Einstellung kann DrRacket sich nicht gegen Programme schützen, die zuviel Speicher allozieren - DrRacket könnte abstürzen.")
+ 
  (clear-error-highlight-menu-item-label "Fehlermarkierung entfernen")
  (clear-error-highlight-item-help-string "Entfernt die rosa Fehlermarkierung")
  (jump-to-next-error-highlight-menu-item-label "Zur nächsten Fehlermarkierung springen")
@@ -888,6 +908,12 @@
  ;;; executables
  (create-executable-menu-item-label "Programmdatei generieren...")
  (create-executable-title "Programmdatei generieren")
+ (drracket-creates-executables-only-in-some-languages
+  "DrRacket unterstützt die Erzeugung von Programmdateien nur,"
+  " wenn eine Lehrsprache (DMdA oder HtDP) im Dialog “Sprache auswählen”"
+  " ausgewählt ist, oder wenn dort “Die Sprache Racket” ausgewählt ist und"
+  " eine #lang-Zeile am Anfang des Programms steht.\n\nZiehen"
+  " Sie das Kommandozeilenprogramm \"raco exe\" in Betracht.")
  (must-save-before-executable "Sie müssen vor der Generierung einer Programmdatei speichern.")
  (save-a-mred-launcher "GRacket-Launcher speichern")
  (save-a-mzscheme-launcher "Racket-Launcher speichern")
@@ -895,6 +921,8 @@
  (save-a-mzscheme-stand-alone-executable "Racket-Stand-Alone-Programmdatei speichern")
  (save-a-mred-distribution "GRacket-Distribution speichern")
  (save-a-mzscheme-distribution "Racket-Distribution speichern")
+
+ (error-creating-executable "Fehler beim Erzeugen der Stand-Alone-Programmdatei:") ;; this is suffixed with an error message ala error-display-handler
 
  (definitions-not-saved "Die Definitionen sind nicht gespeichert. Die Programmdatei wird von der letzten gespeicherten Version gezogen. Weitermachen?")
  (launcher "Launcher")
@@ -1583,6 +1611,9 @@
   (planet-docs-building "PLaneT: Dokumentation bauen (ausgelöst durch ~a)...")
   (planet-no-status "PLaneT") ;; this can happen when there is status shown in a different and then the user switches to a tab where planet hasn't been used
 
+  (bug-report-field-pkg "Info Package-System")
+  
+
  ;; string normalization. To see this, paste some text with a ligature into DrRacket
  ;; the first three strings are in the dialog that appears. The last one is in the preferences dialog
  (normalize "Normalisieren")
@@ -1608,6 +1639,28 @@
   ;; menu item in the 'edit' menu; applies to editors with programs in them
   ;; (technically, editors that implement color:text<%>)
   (spell-check-string-constants "String-Konstanten korrekturlesen")
+  (spelling-dictionaries "Wörterbücher für die Rechtschreibprüfung") ; (sub)menu whose items are the different possible dictionaries
+  (default-spelling-dictionary "Standard-Wörterbuch") ; first item in menu from previous line
   (misspelled-text-color "Rechtschreibfehler in Textfarbe") ;; in the preferences dialog  
   (cannot-find-ispell-or-aspell-path "aspell- bzw. ispell-Programm nicht gefunden")
+  ; puts the path to the spell program in the ~a and then the error message
+  ; is put following this string (with a blank line in between)
+  (spell-program-wrote-to-stderr-on-startup "Der Rechtschreibchecker (~a) hat eine Fehlermeldung ausgegeben:")
+  
+  ;; GUI for installing a pkg package; available via File|Install Package...
+  (install-pkg-menu-item... "Paket installieren...")
+  (install-pkg-dialog-title "Paket installieren")
+  (install-pkg-source-label "Packet-Quelltext")
+  (install-pkg-type-label "Typ Paket-Quelltext")
+  (install-pkg-infer "Inferieren")
+  (install-pkg-file "Datei")
+  (install-pkg-dir "Verzeichnis")
+  (install-pkg-dir-url "URL Verzeichnis")
+  (install-pkg-file-url "URL Datei")
+  (install-pkg-github "Github")
+  (install-pkg-name "Name (frage Auflöser)")
+  (install-pkg-inferred-as "Typ inferiert als ~a")
+  (install-pkg-force? "Existierendes überschreiben?")
+  (install-pkg-command-line "Äquivalente Kommandozeilen-Aufruf:")
+  (install-pkg-error-installing-title "Fehler beim Installieren von Paket")
  )

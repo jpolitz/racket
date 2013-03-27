@@ -61,6 +61,9 @@ typedef unsigned long uintptr_t;
 #undef HAVE_EPOLL_SYSCALL
 #undef HAVE_KQUEUE_SYSCALL
 
+/* When mmap() and mprotect() are available: */
+#undef HAVE_MMAP_MPROTECT
+
 /* Enable futures: */
 #undef MZ_USE_FUTURES
 
@@ -78,5 +81,8 @@ typedef unsigned long uintptr_t;
 /* Enable single-precision floats [as default]: */
 #undef USE_SINGLE_FLOATS
 #undef USE_SINGLE_FLOATS_AS_DEFAULT
+
+/* To disable extflonums when they would otherwise work: */
+#undef MZ_NO_EXTFLONUMS
 
 #endif

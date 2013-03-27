@@ -259,7 +259,7 @@
 (err/rt-test (open-input-file 8))
 (err/rt-test (open-input-file "x" 8))
 (err/rt-test (open-input-file "x" 'something-else))
-(err/rt-test (open-input-file "badfile") exn:fail:filesystem?)
+(err/rt-test (open-input-file "badfile") exn:fail:filesystem:errno?)
 
 (arity-test open-output-file 1 1)
 (err/rt-test (open-output-file 8))
@@ -418,6 +418,20 @@
 (write-char #\x out-p)
 (close-output-port out-p)
 (test 'hx with-input-from-file tempfilename read)
+
+(let ([o (open-output-file tempfilename #:exists 'truncate)])
+  (close-output-port o))
+(test 0 file-size tempfilename)
+(let ([o (open-output-file tempfilename #:exists 'update)])
+  (file-position o 899)
+  (write-byte 0 o)
+  (close-output-port o))
+(test 900 file-size tempfilename)
+(let ([o (open-output-file tempfilename #:exists 'update)])
+  (file-truncate o 399)
+  (close-output-port o))
+(test 399 file-size tempfilename)
+
 (delete-file tempfilename)
 
 (arity-test call-with-input-file 2 2)
@@ -1503,6 +1517,9 @@
   (err/rt-test (filesystem-root-list) (fs-reject? 'filesystem-root-list))
   (err/rt-test (find-system-path 'temp-dir) (fs-reject? 'find-system-path)))
 
+;; Cleanup files created above
+(for ([f '("tmp1" "tmp2" "tmp3")] #:when (file-exists? f)) (delete-file f))
+
 ;; Network - - - - - - - - - - - - - - - - - - - - - -
 
 (define (net-reject? who host port what)
@@ -1553,6 +1570,14 @@
   (test (list sub) 'in-directory (for/list ([v (in-directory tmp)]) v))
   (delete-directory sub)
   (delete-directory/files tmp))
+
+;; ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(test #t exn? (exn:fail:filesystem:errno "a" (current-continuation-marks) '(10 . posix)))
+(err/rt-test (exn:fail:filesystem:errno "a" (current-continuation-marks) 10))
+(err/rt-test (exn:fail:filesystem:errno "a" (current-continuation-marks) '(10 posix)))
+(err/rt-test (exn:fail:filesystem:errno "a" (current-continuation-marks) '(10)))
+(err/rt-test (exn:fail:filesystem:errno "a" (current-continuation-marks) '#(10)))
 
 ;; ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 

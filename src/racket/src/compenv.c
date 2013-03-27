@@ -1,6 +1,6 @@
 /*
   Racket
-  Copyright (c) 2004-2012 PLT Scheme Inc.
+  Copyright (c) 2004-2013 PLT Design Inc.
   Copyright (c) 1995-2001 Matthew Flatt
 
     This library is free software; you can redistribute it and/or
@@ -99,6 +99,12 @@ void scheme_init_compenv_places(void)
     ht = scheme_make_hash_table(SCHEME_hash_ptr);
     locals_ht[1] = ht;
   }
+}
+
+void scheme_init_compenv_symbol(void)
+{
+  REGISTER_SO(unshadowable_symbol);
+  unshadowable_symbol = scheme_intern_symbol("unshadowable");
 }
 
 /*========================================================================*/
@@ -1163,13 +1169,15 @@ Scheme_Object *scheme_tl_id_sym(Scheme_Env *env, Scheme_Object *id, Scheme_Objec
        simpify in "syntax.c") and submodules won't re-expand correctly.
        So, check for a context-determined existing rename. */
     if (!SCHEME_HASHTP((Scheme_Object *)env) && env->module && (mode <= 2)) {
-      Scheme_Object *mod, *nm = id;
+      Scheme_Object *mod, *nm = id, *nom_modix = scheme_false;
       int skipped;
-      mod = scheme_stx_module_name(NULL, &nm, scheme_make_integer(env->phase), NULL, NULL, NULL, 
+      mod = scheme_stx_module_name(NULL, &nm, scheme_make_integer(env->phase), &nom_modix, NULL, NULL, 
                                    NULL, NULL, NULL, NULL, NULL, &skipped);
-      if (mod /* must refer to env->module, otherwise there would
-		 have been an error before getting here */
+      if (mod
           && !SAME_OBJ(mod, scheme_undefined)
+          /* refers to env->module if nom_modix has #f path */
+          && (!SAME_TYPE(SCHEME_TYPE(nom_modix), scheme_module_index_type)
+              || SCHEME_FALSEP(((Scheme_Modidx *)nom_modix)->path))
           && ((skipped == 0) || (mode < 2))
 	  && NOT_SAME_OBJ(nm, sym))
 	/* It has a rename already! */
@@ -2028,6 +2036,7 @@ scheme_lookup_binding(Scheme_Object *find_id, Scheme_Comp_Env *env, int flags,
       && (!(scheme_is_kernel_modname(modname) 
             || scheme_is_unsafe_modname(modname)
             || scheme_is_flfxnum_modname(modname)
+            || scheme_is_extfl_modname(modname)
             || scheme_is_futures_modname(modname))
           || (flags & SCHEME_REFERENCING))) {
     /* Create a module variable reference, so that idx is preserved: */
@@ -2097,6 +2106,16 @@ Scheme_Object *scheme_extract_flfxnum(Scheme_Object *o)
   Scheme_Env *home;
   home = scheme_get_bucket_home((Scheme_Bucket *)o);
   if (home && home->module && scheme_is_flfxnum_modname(home->module->modname))
+    return (Scheme_Object *)((Scheme_Bucket *)o)->val;
+  else
+    return NULL;
+}
+
+Scheme_Object *scheme_extract_extfl(Scheme_Object *o)
+{
+  Scheme_Env *home;
+  home = scheme_get_bucket_home((Scheme_Bucket *)o);
+  if (home && home->module && scheme_is_extfl_modname(home->module->modname))
     return (Scheme_Object *)((Scheme_Bucket *)o)->val;
   else
     return NULL;
@@ -2348,6 +2367,10 @@ Scheme_Object *scheme_local_lift_require(Scheme_Object *form, Scheme_Object *ori
 
   SCHEME_EXPAND_OBSERVE_LIFT_REQUIRE(scheme_get_expand_observe(), req_form, orig_form, form);
 
+  /* In a top-level context, may need to force compile-time evaluation: */
+  if (!env->genv->module)
+    scheme_prepare_compile_env(env->genv);
+
   return form;
 }
 
@@ -2420,11 +2443,6 @@ Scheme_Object *scheme_find_local_shadower(Scheme_Object *sym, Scheme_Object *sym
 {
   Scheme_Comp_Env *frame;
   Scheme_Object *esym, *uid = NULL, *env_marks, *prop;
-
-  if (!unshadowable_symbol) {
-    REGISTER_SO(unshadowable_symbol);
-    unshadowable_symbol = scheme_intern_symbol("unshadowable");
-  }
 
   /* Walk backward through the frames, looking for a renaming binding
      with the same marks as the given identifier, sym. Skip over

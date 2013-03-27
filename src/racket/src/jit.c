@@ -1,6 +1,6 @@
 /*
   Racket
-  Copyright (c) 2006-2012 PLT Scheme Inc.
+  Copyright (c) 2006-2013 PLT Design Inc.
 
     This library is free software; you can redistribute it and/or
     modify it under the terms of the GNU Library General Public
@@ -150,6 +150,9 @@ void scheme_fill_stack_lwc_end(void) XFORM_SKIP_PROC
 {
 #ifdef JIT_THREAD_LOCAL
   scheme_current_lwc->saved_save_fp = scheme_jit_save_fp;
+# ifdef MZ_LONG_DOUBLE
+  scheme_current_lwc->saved_save_extfp = scheme_jit_save_extfp;
+# endif
 #endif
 }
 
@@ -201,6 +204,9 @@ Scheme_Object *scheme_jit_continuation_apply_install(Apply_LWC_Args *args) XFORM
 #ifdef USE_THREAD_LOCAL
   args->new_threadlocal = &BOTTOM_VARIABLE;
   scheme_jit_save_fp = lwc->saved_save_fp;
+# ifdef MZ_LONG_DOUBLE
+  scheme_jit_save_extfp = lwc->saved_save_extfp;
+# endif
 #endif
 
   delta = (intptr_t)new_stack_start - (intptr_t)lwc->stack_end;
@@ -318,6 +324,20 @@ int scheme_jit_check_closure_flonum_bit(Scheme_Closure_Data *data, int pos, int 
     return 1;
   else
     return 0;
+}
+int scheme_jit_check_closure_extflonum_bit(Scheme_Closure_Data *data, int pos, int delta)
+{
+#ifdef MZ_LONG_DOUBLE
+  int ct;
+  pos += delta;
+  ct = scheme_boxmap_get(data->closure_map, pos, data->closure_size);
+  if (ct == (CLOS_TYPE_TYPE_OFFSET + SCHEME_LOCAL_TYPE_EXTFLONUM))
+    return 1;
+  else
+    return 0;
+#else
+  return 0;
+#endif
 }
 #endif
 
@@ -853,7 +873,7 @@ static int expression_avoids_clearing_local(Scheme_Object *wrt, int pos, int fue
 }
 
 int scheme_is_relatively_constant_and_avoids_r1_maybe_fp(Scheme_Object *obj, Scheme_Object *wrt,
-                                                         int fp_ok)
+                                                         int fp_ok, int extfl)
 {
   Scheme_Type t;
 
@@ -865,7 +885,11 @@ int scheme_is_relatively_constant_and_avoids_r1_maybe_fp(Scheme_Object *obj, Sch
     /* Must have clearing, other-clears, or type flag set,
        otherwise is_constant_and_avoids_r1() would have returned 1. */
     if (SCHEME_GET_LOCAL_TYPE(obj) == SCHEME_LOCAL_TYPE_FLONUM)
-      return fp_ok;
+      return (fp_ok && !extfl);
+#ifdef MZ_LONG_DOUBLE
+    else if (SCHEME_GET_LOCAL_TYPE(obj) == SCHEME_LOCAL_TYPE_EXTFLONUM)
+      return (fp_ok && extfl);
+#endif
     else if (expression_avoids_clearing_local(wrt, SCHEME_LOCAL_POS(obj), 3))
       /* different local vars, sp order doesn't matter */
       return 1;
@@ -876,7 +900,7 @@ int scheme_is_relatively_constant_and_avoids_r1_maybe_fp(Scheme_Object *obj, Sch
 
 int scheme_is_relatively_constant_and_avoids_r1(Scheme_Object *obj, Scheme_Object *wrt)
 {
-  return scheme_is_relatively_constant_and_avoids_r1_maybe_fp(obj, wrt, 0);
+  return scheme_is_relatively_constant_and_avoids_r1_maybe_fp(obj, wrt, 0, 0);
 }
 
 int scheme_needs_only_target_register(Scheme_Object *obj, int and_can_reorder)
@@ -1067,7 +1091,7 @@ static int finish_branch(mz_jit_state *jitter, int target, Branch_Info *for_bran
 
 #ifdef USE_FLONUM_UNBOXING
 
-int scheme_generate_flonum_local_boxing(mz_jit_state *jitter, int pos, int offset, int target)
+int scheme_generate_flonum_local_boxing(mz_jit_state *jitter, int pos, int offset, int target, int extfl)
 {
   GC_CAN_IGNORE jit_insn *ref;
   __START_TINY_JUMPS__(1);
@@ -1075,7 +1099,9 @@ int scheme_generate_flonum_local_boxing(mz_jit_state *jitter, int pos, int offse
   __END_TINY_JUMPS__(1);
   CHECK_LIMIT();
   jit_movi_l(JIT_R0, offset);
-  (void)jit_calli(sjc.box_flonum_from_stack_code);
+  MZ_FPUSEL_STMT(extfl,
+                 (void)jit_calli(sjc.box_extflonum_from_stack_code),
+                 (void)jit_calli(sjc.box_flonum_from_stack_code));
   mz_rs_stxi(pos, JIT_R0);
   __START_TINY_JUMPS__(1);
   mz_patch_branch(ref);
@@ -1084,39 +1110,46 @@ int scheme_generate_flonum_local_boxing(mz_jit_state *jitter, int pos, int offse
   return 1;
 }
 
-static int generate_flonum_local_boxing(mz_jit_state *jitter, int pos, int local_pos, int target)
+static int generate_flonum_local_boxing(mz_jit_state *jitter, int pos, int local_pos, int target, int extfl)
 {
   int offset;
+
   offset = scheme_mz_flostack_pos(jitter, local_pos);
   offset = JIT_FRAME_FLOSTACK_OFFSET - offset;
   if (jitter->unbox) {
     int fpr0;
-    fpr0 = JIT_FPR_0(jitter->unbox_depth);
-    jit_ldxi_d_fppush(fpr0, JIT_FP, offset);
+    fpr0 = JIT_FPUSEL_FPR_0(extfl, jitter->unbox_depth);
+    jit_FPSEL_ldxi_xd_fppush(extfl, fpr0, JIT_FP, offset);
     jitter->unbox_depth++;
   } else {
     mz_rs_sync();
-    scheme_generate_flonum_local_boxing(jitter, pos, offset, target);
+    scheme_generate_flonum_local_boxing(jitter, pos, offset, target, extfl);
   }
 
   return 1;
 }
 
-int scheme_generate_flonum_local_unboxing(mz_jit_state *jitter, int push)
+int scheme_generate_flonum_local_unboxing(mz_jit_state *jitter, int push, int no_store, int extfl)
 /* Move FPR0 onto C stack */
 {
-  if ((jitter->flostack_offset + sizeof(double)) > jitter->flostack_space) {
+  int sz, fpr0;
+
+  sz = MZ_FPUSEL(extfl, 2 * sizeof(double), sizeof(double));
+
+  if ((jitter->flostack_offset + sz) > jitter->flostack_space) {
     int space = FLOSTACK_SPACE_CHUNK;
     jitter->flostack_space += space;
     jit_subi_l(JIT_SP, JIT_SP, space);
   }
+  jitter->flostack_offset += sz;
 
-  jitter->flostack_offset += sizeof(double);
-  if (push)
-    mz_runstack_flonum_pushed(jitter, jitter->flostack_offset);
+  if (push) mz_runstack_flonum_pushed(jitter, jitter->flostack_offset);
   CHECK_LIMIT();
 
-  mz_st_fppop(jitter->flostack_offset, JIT_FPR0);
+  if (!no_store) {
+    fpr0 = MZ_FPUSEL(extfl, JIT_FPU_FPR0, JIT_FPR0);
+    mz_st_fppop(jitter->flostack_offset, fpr0, extfl);
+  }
 
   return 1;
 }
@@ -1162,7 +1195,7 @@ static int generate_closure(Scheme_Closure_Data *data,
 # ifdef CAN_INLINE_ALLOC
     if (immediately_filled) {
       /* Inlined alloc */
-      scheme_inline_alloc(jitter, sz, scheme_native_closure_type, 0, 0, 0, 0);
+      scheme_inline_alloc(jitter, sz, scheme_native_closure_type, 0, 0, 0, 0,0 );
       CHECK_LIMIT();
       jit_addi_p(JIT_R0, JIT_V1, OBJHEAD_SIZE);
     } else
@@ -1237,10 +1270,13 @@ static int generate_closure_prep(Scheme_Closure_Data *data, mz_jit_state *jitter
     size = data->closure_size;
     map = data->closure_map;
     for (j = 0; j < size; j++) {
-      if (CLOSURE_CONTENT_IS_FLONUM(data, j)) {
+      if (CLOSURE_CONTENT_IS_FLONUM(data, j)
+          || CLOSURE_CONTENT_IS_EXTFLONUM(data, j)) {
+        int extfl;
+        extfl = CLOSURE_CONTENT_IS_EXTFLONUM(data, j);
         pos = mz_remap(map[j]);
         jit_ldxi_p(JIT_R1, JIT_RUNSTACK, WORDS_TO_BYTES(pos));
-        generate_flonum_local_boxing(jitter, pos, map[j], JIT_R1);
+        generate_flonum_local_boxing(jitter, pos, map[j], JIT_R1, extfl);
         CHECK_LIMIT();
         retval = 1;
       }
@@ -1324,6 +1360,19 @@ static int generate_case_closure(Scheme_Object *obj, mz_jit_state *jitter, int t
   ensure_case_closure_native(c);
   ndata = c->native_code;
 
+  count = c->count;
+
+  for (i = 0; i < count; i++) {
+    o = c->array[i];
+    if (SCHEME_PROCP(o))
+      o = (Scheme_Object *)((Scheme_Closure *)o)->code;
+    data = (Scheme_Closure_Data *)o;
+    mz_rs_sync();
+    CHECK_LIMIT();
+    generate_closure_prep(data, jitter);
+    CHECK_LIMIT();
+  }
+
   mz_rs_sync();
 
   JIT_UPDATE_THREAD_RSPTR_IF_NEEDED();
@@ -1337,8 +1386,6 @@ static int generate_case_closure(Scheme_Object *obj, mz_jit_state *jitter, int t
   jit_retval(JIT_R1);
   CHECK_LIMIT();
 
-  count = c->count;
-  
   for (i = 0; i < count; i++) {
     o = c->array[i];
     if (SCHEME_PROCP(o))
@@ -1426,6 +1473,7 @@ static int generate_non_tail_with_branch(Scheme_Object *obj, mz_jit_state *jitte
       LOG_IT(("non-tail\n"));
       if (mark_pos_ends)
 	scheme_generate_non_tail_mark_pos_prefix(jitter);
+      CHECK_LIMIT();
       if (!jitter->local1_busy) {
         mz_tl_ldi_p(JIT_R2, tl_scheme_current_cont_mark_stack);
         using_local1 = 1;
@@ -1513,10 +1561,10 @@ int scheme_generate_non_tail(Scheme_Object *obj, mz_jit_state *jitter,
 }
 
 int scheme_generate_unboxed(Scheme_Object *obj, mz_jit_state *jitter, int inlined_ok, int unbox_anyway)
-/* de-sync's; if refslow, failure jumps conditionally with non-flonum in R0;
+/* de-sync's;
    inlined_ok == 2 => can generate directly; inlined_ok == 1 => non-tail unbox */
 {
-  int saved;
+  mz_jit_unbox_state ubs;
 
   if (inlined_ok) {
     if (inlined_ok == 2)
@@ -1536,11 +1584,12 @@ int scheme_generate_unboxed(Scheme_Object *obj, mz_jit_state *jitter, int inline
   /* It probably would be useful to special-case a let-one
      sequence down to something that can be unboxed. */
 
-  saved = jitter->unbox;
-  jitter->unbox = 0;
+  scheme_mz_unbox_save(jitter, &ubs);
+
   scheme_generate_non_tail(obj, jitter, 0, 1, 0);
   CHECK_LIMIT();
-  jitter->unbox = saved;
+
+  scheme_mz_unbox_restore(jitter, &ubs);
 
   if (inlined_ok || unbox_anyway) {
     /* Move result into floating-point register: */
@@ -1935,12 +1984,17 @@ int scheme_generate(Scheme_Object *obj, mz_jit_state *jitter, int is_tail, int w
     {
       /* Other parts of the JIT rely on this code modifying only the target register,
          unless the type is SCHEME_FLONUM_TYPE */
-      int pos, flonum;
+      int pos, flonum, extfl;
       START_JIT_DATA();
 #ifdef USE_FLONUM_UNBOXING
       flonum = (SCHEME_GET_LOCAL_TYPE(obj) == SCHEME_LOCAL_TYPE_FLONUM);
+      if (MZ_LONG_DOUBLE_AND(SCHEME_GET_LOCAL_TYPE(obj) == SCHEME_LOCAL_TYPE_EXTFLONUM))
+        flonum = extfl = 1;
+      else
+        extfl = 0;
 #else
       flonum = 0;
+      extfl = 0;
 #endif
       pos = mz_remap(SCHEME_LOCAL_POS(obj));
       LOG_IT(("local %d [%d]\n", pos, SCHEME_LOCAL_FLAGS(obj)));
@@ -1997,7 +2051,7 @@ int scheme_generate(Scheme_Object *obj, mz_jit_state *jitter, int is_tail, int w
       CHECK_LIMIT();
       if (flonum && !result_ignored) {
 #ifdef USE_FLONUM_UNBOXING
-        generate_flonum_local_boxing(jitter, pos, SCHEME_LOCAL_POS(obj), target);
+        generate_flonum_local_boxing(jitter, pos, SCHEME_LOCAL_POS(obj), target, extfl);
         CHECK_LIMIT();
 #endif
       } else {
@@ -2370,7 +2424,7 @@ int scheme_generate(Scheme_Object *obj, mz_jit_state *jitter, int is_tail, int w
       p = SCHEME_PTR2_VAL(obj);
 
 #ifdef CAN_INLINE_ALLOC
-      scheme_inline_alloc(jitter, sizeof(Scheme_Object*), -1, 0, 0, 0, 0);
+      scheme_inline_alloc(jitter, sizeof(Scheme_Object*), -1, 0, 0, 0, 0, 0);
       CHECK_LIMIT();
       jit_addi_p(JIT_R0, JIT_V1, OBJHEAD_SIZE);
       jit_ldxi_p(JIT_R2, JIT_RUNSTACK, WORDS_TO_BYTES(pos));
@@ -2525,7 +2579,7 @@ int scheme_generate(Scheme_Object *obj, mz_jit_state *jitter, int is_tail, int w
       }
 
       LOG_IT(("app 3\n"));
-      
+
       args[0] = app->rator;
       args[1] = app->rand1;
       args[2] = app->rand2;
@@ -2595,15 +2649,13 @@ int scheme_generate(Scheme_Object *obj, mz_jit_state *jitter, int is_tail, int w
   case scheme_let_value_type:
     {
       Scheme_Let_Value *lv = (Scheme_Let_Value *)obj;
-      int ab = SCHEME_LET_AUTOBOX(lv), i, pos, to_unbox = 0;
+      int ab = SCHEME_LET_AUTOBOX(lv), i, pos;
+      mz_jit_unbox_state ubs;
       START_JIT_DATA();
 
       LOG_IT(("let...\n"));
 
-      if (jitter->unbox) {
-        to_unbox = jitter->unbox;
-        jitter->unbox = 0;
-      }
+      scheme_mz_unbox_save(jitter, &ubs);
 
       if (lv->count == 1) {
 	/* Expect one result: */
@@ -2684,8 +2736,7 @@ int scheme_generate(Scheme_Object *obj, mz_jit_state *jitter, int is_tail, int w
 
       LOG_IT(("...in\n"));
 
-      if (to_unbox)
-        jitter->unbox = to_unbox;
+      scheme_mz_unbox_restore(jitter, &ubs);
 
       return scheme_generate(lv->body, jitter, is_tail, wcm_may_replace, 
                              multi_ok, orig_target, for_branch);
@@ -2693,15 +2744,13 @@ int scheme_generate(Scheme_Object *obj, mz_jit_state *jitter, int is_tail, int w
   case scheme_let_void_type:
     {
       Scheme_Let_Void *lv = (Scheme_Let_Void *)obj;
-      int c = lv->count, to_unbox = 0;
+      int c = lv->count;
+      mz_jit_unbox_state ubs;
       START_JIT_DATA();
 
       LOG_IT(("letv...\n"));
 
-      if (jitter->unbox) {
-        to_unbox = jitter->unbox;
-        jitter->unbox = 0;
-      }
+      scheme_mz_unbox_save(jitter, &ubs);
 
       mz_rs_dec(c);
       CHECK_RUNSTACK_OVERFLOW();
@@ -2715,7 +2764,7 @@ int scheme_generate(Scheme_Object *obj, mz_jit_state *jitter, int is_tail, int w
 	for (i = 0; i < c; i++) {
 	  CHECK_LIMIT();
 #ifdef CAN_INLINE_ALLOC
-          scheme_inline_alloc(jitter, sizeof(Scheme_Object*), -1, 0, 0, 0, 0);
+          scheme_inline_alloc(jitter, sizeof(Scheme_Object*), -1, 0, 0, 0, 0, 0);
           CHECK_LIMIT();
           jit_addi_p(JIT_R0, JIT_V1, OBJHEAD_SIZE);
           (void)jit_movi_p(JIT_R1, scheme_undefined);
@@ -2739,8 +2788,7 @@ int scheme_generate(Scheme_Object *obj, mz_jit_state *jitter, int is_tail, int w
 
       LOG_IT(("...in\n"));
 
-      if (to_unbox)
-        jitter->unbox = to_unbox;
+      scheme_mz_unbox_restore(jitter, &ubs);
 
       return scheme_generate(lv->body, jitter, is_tail, wcm_may_replace, 
                              multi_ok, orig_target, for_branch);
@@ -2748,15 +2796,13 @@ int scheme_generate(Scheme_Object *obj, mz_jit_state *jitter, int is_tail, int w
   case scheme_letrec_type:
     {
       Scheme_Letrec *l = (Scheme_Letrec *)obj;
-      int i, nsrs, prepped = 0, to_unbox = 0;
+      int i, nsrs, prepped = 0;
+      mz_jit_unbox_state ubs;
       START_JIT_DATA();
 
       LOG_IT(("letrec...\n"));
 
-      if (jitter->unbox) {
-        to_unbox = jitter->unbox;
-        jitter->unbox = 0;
-      }
+      scheme_mz_unbox_save(jitter, &ubs);
 
       mz_rs_sync();
 
@@ -2809,8 +2855,7 @@ int scheme_generate(Scheme_Object *obj, mz_jit_state *jitter, int is_tail, int w
         jitter->need_set_rs = nsrs;
       }
 
-      if (to_unbox)
-        jitter->unbox = to_unbox;
+      scheme_mz_unbox_restore(jitter, &ubs);
 
       return scheme_generate(l->body, jitter, is_tail, wcm_may_replace, 
                              multi_ok, orig_target, for_branch);
@@ -2818,37 +2863,43 @@ int scheme_generate(Scheme_Object *obj, mz_jit_state *jitter, int is_tail, int w
   case scheme_let_one_type:
     {
       Scheme_Let_One *lv = (Scheme_Let_One *)obj;
-      int flonum, to_unbox = 0, unused;
+      int flonum, unused, extfl;
+      mz_jit_unbox_state ubs;
       START_JIT_DATA();
 
       LOG_IT(("leto...\n"));
 
-      if (jitter->unbox) {
-        to_unbox = jitter->unbox;
-        jitter->unbox = 0;
-      }
+      scheme_mz_unbox_save(jitter, &ubs);
 
       mz_runstack_skipped(jitter, 1);
 
 #ifdef USE_FLONUM_UNBOXING
       flonum = (SCHEME_LET_ONE_TYPE(lv) == SCHEME_LOCAL_TYPE_FLONUM);
+      if (MZ_LONG_DOUBLE_AND(SCHEME_LET_ONE_TYPE(lv) == SCHEME_LOCAL_TYPE_EXTFLONUM))
+        flonum = extfl = 1;
+      else
+        extfl = 0;
 #else
-      flonum = 0;
+      flonum = extfl = 0;
 #endif
       unused = SCHEME_LET_EVAL_TYPE(lv) & LET_ONE_UNUSED;
 
       PAUSE_JIT_DATA();
       if (flonum) {
 #ifdef USE_FLONUM_UNBOXING
-        if (scheme_can_unbox_inline(lv->value, 5, JIT_FPR_NUM-1, 0)) {
+        if (scheme_can_unbox_inline(lv->value, 5, JIT_FPUSEL_FPR_NUM(extfl)-1, 0, extfl)) {
           jitter->unbox++;
+          MZ_FPUSEL_STMT_ONLY(extfl, jitter->unbox_extflonum++;);
           scheme_generate_unboxed(lv->value, jitter, 2, 0);
-        } else {
-          if (0) /* validator should ensure that this is ok */
-            if (!scheme_can_unbox_directly(lv->value))
-              scheme_signal_error("internal error: bad FLONUM annotation on let");
+        } else if (scheme_can_unbox_directly(lv->value, extfl)) {
           jitter->unbox++;
+          MZ_FPUSEL_STMT_ONLY(extfl, jitter->unbox_extflonum++;);
           scheme_generate_unboxed(lv->value, jitter, 1, 0);
+        } else {
+          /* validator should ensure that this is ok */
+          jitter->unbox++;
+          MZ_FPUSEL_STMT_ONLY(extfl, jitter->unbox_extflonum++;);
+          scheme_generate_unboxed(lv->value, jitter, 0, 1);
         }
 #endif
       } else if (unused && SCHEME_FALSEP(lv->value)) {
@@ -2868,11 +2919,12 @@ int scheme_generate(Scheme_Object *obj, mz_jit_state *jitter, int is_tail, int w
 
       if (flonum) {
 #ifdef USE_FLONUM_UNBOXING
+        MZ_FPUSEL_STMT_ONLY(extfl, --jitter->unbox_extflonum);
         --jitter->unbox;
         --jitter->unbox_depth;
         if (jitter->unbox_depth)
           scheme_signal_error("internal error: flonum let RHS leaves unbox depth");
-        scheme_generate_flonum_local_unboxing(jitter, 1);
+        scheme_generate_flonum_local_unboxing(jitter, 1, 0, extfl);
         CHECK_LIMIT();
         (void)jit_movi_p(JIT_R0, NULL);
 #endif
@@ -2892,8 +2944,7 @@ int scheme_generate(Scheme_Object *obj, mz_jit_state *jitter, int is_tail, int w
 
       LOG_IT(("...in\n"));
 
-      if (to_unbox)
-        jitter->unbox = to_unbox;
+      scheme_mz_unbox_restore(jitter, &ubs);
 
       return scheme_generate(lv->body, jitter, is_tail, wcm_may_replace, 
                              multi_ok, orig_target, for_branch);
@@ -2991,24 +3042,49 @@ int scheme_generate(Scheme_Object *obj, mz_jit_state *jitter, int is_tail, int w
         finish_branch_with_true(jitter, for_branch);
       return 1;
     } else if (jitter->unbox) {
-      double d;
-      int fpr0;
+      GC_CAN_IGNORE const char *bad = NULL;
 
-      if (SCHEME_FLOATP(obj))
-        d = SCHEME_FLOAT_VAL(obj);
-      else {
+#ifdef MZ_LONG_DOUBLE
+      if (jitter->unbox_extflonum) {
+        long_double d;
+        int fpr0;
+
+        if (SCHEME_LONG_DBLP(obj))
+          d = SCHEME_LONG_DBL_VAL(obj);
+        else {
+          bad = "ext";
+          d = get_long_double_zero();
+        }
+
+        fpr0 = JIT_FPU_FPR_0(jitter->unbox_depth);
+        mz_fpu_movi_ld_fppush(fpr0, d, target);
+     } else
+#endif
+      {
+        double d;
+        int fpr0;
+        
+        if (SCHEME_FLOATP(obj))
+          d = SCHEME_FLOAT_VAL(obj);
+        else {
+          bad = "";
+          d = 0.0;
+        }
+        
+        fpr0 = JIT_FPR_0(jitter->unbox_depth);
+        mz_movi_d_fppush(fpr0, d, target);
+      }
+      
+      if (bad)
         scheme_log(NULL,
                    SCHEME_LOG_WARNING,
                    0,
-                   "warning: JIT detects flonum operation applied to non-flonum constant: %V",
+                   "warning: JIT detects %sflonum operation applied to non-%sflonum constant: %V",
+                   bad, bad,
                    obj);
-        d = 0.0;
-      }
 
-      fpr0 = JIT_FPR_0(jitter->unbox_depth);
-      mz_movi_d_fppush(fpr0, d, target);
       jitter->unbox_depth++;
-
+        
       return 1;
     } else if (!result_ignored) {
       Scheme_Type type = SCHEME_TYPE(obj);
@@ -3344,10 +3420,15 @@ static int do_generate_closure(mz_jit_state *jitter, void *_data)
     zref = jit_bnei_l(jit_forward(), JIT_R1, f_offset);
         
     for (i = data->num_params; i--; ) {
-      if (CLOSURE_ARGUMENT_IS_FLONUM(data, i)) {
+      if (CLOSURE_ARGUMENT_IS_FLONUM(data, i)
+          || CLOSURE_ARGUMENT_IS_EXTFLONUM(data, i)) {
+        int extfl;
+        extfl = CLOSURE_ARGUMENT_IS_EXTFLONUM(data, i);
         mz_rs_ldxi(JIT_R1, i);
-        jit_ldxi_d_fppush(JIT_FPR0, JIT_R1, &((Scheme_Double *)0x0)->double_val);  
-        scheme_generate_flonum_local_unboxing(jitter, 1);        
+        MZ_FPUSEL_STMT(extfl,
+                       jit_fpu_ldxi_ld_fppush(JIT_FPU_FPR0, JIT_R1, &((Scheme_Long_Double *)0x0)->long_double_val),
+                       jit_ldxi_d_fppush(JIT_FPR0, JIT_R1, &((Scheme_Double *)0x0)->double_val));
+        scheme_generate_flonum_local_unboxing(jitter, 1, 0, extfl);
         CHECK_LIMIT();
       } else {
         mz_runstack_pushed(jitter, 1);
@@ -3420,10 +3501,15 @@ static int do_generate_closure(mz_jit_state *jitter, void *_data)
       } else {
 #ifdef USE_FLONUM_UNBOXING
         if ((SCHEME_CLOSURE_DATA_FLAGS(data) & CLOS_HAS_TYPED_ARGS)
-            && (CLOSURE_CONTENT_IS_FLONUM(data, i))) {
+            && (CLOSURE_CONTENT_IS_FLONUM(data, i)
+                || CLOSURE_CONTENT_IS_EXTFLONUM(data, i))) {
+          int extfl;
+          extfl = CLOSURE_CONTENT_IS_EXTFLONUM(data, i);
           mz_rs_ldxi(JIT_R1, i);
-          jit_ldxi_d_fppush(JIT_FPR0, JIT_R1, &((Scheme_Double *)0x0)->double_val);
-          scheme_generate_flonum_local_unboxing(jitter, 1);
+          MZ_FPUSEL_STMT(extfl,
+                         jit_fpu_ldxi_ld_fppush(JIT_FPU_FPR0, JIT_R1, &((Scheme_Long_Double *)0x0)->long_double_val),
+                         jit_ldxi_d_fppush(JIT_FPR0, JIT_R1, &((Scheme_Double *)0x0)->double_val));
+          scheme_generate_flonum_local_unboxing(jitter, 1, 0, extfl);
           CHECK_LIMIT();
         } else
 #endif
@@ -3439,10 +3525,15 @@ static int do_generate_closure(mz_jit_state *jitter, void *_data)
     /* Unpack flonum closure data */
     if (SCHEME_CLOSURE_DATA_FLAGS(data) & CLOS_HAS_TYPED_ARGS) {
       for (i = data->closure_size; i--; ) {
-        if (CLOSURE_CONTENT_IS_FLONUM(data, i)) {
+        if (CLOSURE_CONTENT_IS_FLONUM(data, i)
+            || CLOSURE_CONTENT_IS_EXTFLONUM(data, i)) {
+          int extfl;
+          extfl = CLOSURE_CONTENT_IS_EXTFLONUM(data, i);
           mz_rs_ldxi(JIT_R1, i);
-          jit_ldxi_d_fppush(JIT_FPR0, JIT_R1, &((Scheme_Double *)0x0)->double_val);
-          scheme_generate_flonum_local_unboxing(jitter, 1);
+          MZ_FPUSEL_STMT(extfl,
+                         jit_fpu_ldxi_ld_fppush(JIT_FPU_FPR0, JIT_R1, &((Scheme_Long_Double *)0x0)->long_double_val),
+                         jit_ldxi_d_fppush(JIT_FPR0, JIT_R1, &((Scheme_Double *)0x0)->double_val));
+          scheme_generate_flonum_local_unboxing(jitter, 1, 0, extfl);
           CHECK_LIMIT();
         } else {
           mz_runstack_pushed(jitter, 1);

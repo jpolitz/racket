@@ -1,6 +1,6 @@
 /*
   Racket
-  Copyright (c) 2004-2012 PLT Scheme Inc.
+  Copyright (c) 2004-2013 PLT Design Inc.
   Copyright (c) 1995-2001 Matthew Flatt
 
     This library is free software; you can redistribute it and/or
@@ -242,7 +242,7 @@ static void set_app2_eval_type(Scheme_App2_Rec *app)
   et = et << 3;
   et += scheme_get_eval_type(app->rator);
   
-  SCHEME_APPN_FLAGS(app) = et;
+  SCHEME_APPN_FLAGS(app) = et | (SCHEME_APPN_FLAGS(app) & APPN_FLAG_MASK);
 }
 
 void scheme_reset_app2_eval_type(Scheme_App2_Rec *app)
@@ -364,7 +364,7 @@ static void set_app3_eval_type(Scheme_App3_Rec *app)
   et = et << 3;
   et += scheme_get_eval_type(app->rator);
   
-  SCHEME_APPN_FLAGS(app) = et;
+  SCHEME_APPN_FLAGS(app) = et | (SCHEME_APPN_FLAGS(app) & APPN_FLAG_MASK);
 }
 
 void scheme_reset_app3_eval_type(Scheme_App3_Rec *app)

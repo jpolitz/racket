@@ -136,6 +136,12 @@
             ((ull (+ nn mm) ((- n m) (- p q)))
              (ull (+ pp qq) ((- nn mm) (- pp qq))))))
 
+(test 5 syntax-e (syntax-case #'#&5 ()
+                   [#&x #'x]))
+(test '(0 1 2 3 4) syntax->datum
+      (syntax-case #'#&(1 2 3) ()
+                   [#&(x ...) #'(0 x ... 4)]))
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Test basic expansion and property propagation
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -1710,6 +1716,31 @@
   (parameterize ([current-output-port o])
     (dynamic-require ''mm-context-m3 #f))
   (test #"1\n2\n" get-output-bytes o))
+
+;; ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Check preservation of properties by `quasisyntax'
+
+(test #\[ syntax-property #'[x] 'paren-shape)
+(test #\[ syntax-property #`[x] 'paren-shape)
+(test #\[ syntax-property #`[x #,#'y] 'paren-shape)
+(test #\[ syntax-property #`[0 #,@(list #'1 #'2)] 'paren-shape)
+(test #\[ syntax-property #`[0 #,@null] 'paren-shape)
+(test #\[ syntax-property (quasisyntax [x (unsyntax (syntax y))]) 'paren-shape)
+(test #\[ syntax-property (quasisyntax [x y]) 'paren-shape)
+
+;; ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Check srcloc on result of `syntax-local-value/immediate':
+
+(let ()
+  (define-syntax (displayln-syntax-local-value/immediate stx)
+    (syntax-case stx ()
+      [(_ id)
+       (let-values ([(x y)
+                     (syntax-local-value/immediate (datum->syntax #'id
+                                                                  (syntax-e #'id)))])
+         #`#,(syntax-source y))]))
+  (define-syntax ++ (make-rename-transformer (datum->syntax #'here '+)))
+  (test #f values (displayln-syntax-local-value/immediate ++)))
 
 ;; ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 

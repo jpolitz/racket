@@ -5,6 +5,7 @@
                      racket/string)
          racket/performance-hint
          "../../flonum.rkt"
+         "../utils.rkt"
          "impl/delta-dist.rkt"
          "dist-struct.rkt")
 
@@ -31,43 +32,26 @@
 
 ;; ===================================================================================================
 
-(define-syntax (define-distribution-type: stx)
-  (syntax-case stx ()
-    [(_ (type-name T ...) (parent-type-name In Out)
-        (A B) name ([arg-names arg-opts ...] ...))
+(define-syntax (define-real-dist: stx)
+  (syntax-case stx (:)
+    [(_ name type-name struct-name ([arg-names : arg-types] ...) struct-opts ...)
      (let ([arg-name-lst  (syntax->list #'(arg-names ...))])
-       (with-syntax* ([internal-type-name  (format-id #'type-name "~a-Struct" #'type-name)]
-                      [(internal-proc-names ...)  (map (λ (arg-name)
-                                                         (format-id #'type-name
-                                                                    "~a-~a"
-                                                                    #'internal-type-name
-                                                                    arg-name))
-                                                       arg-name-lst)]
-                      [internal-pred-name  (format-id #'type-name "~a?" #'internal-type-name)]
-                      [make-name  (format-id #'name "make-~a" #'name)]
-                      [(proc-names ...)  (map (λ (arg-name)
-                                                (format-id #'name "~a-~a" #'name arg-name))
-                                              arg-name-lst)]
-                      [pred-name  (format-id #'name "~a?" #'name)]
-                      [format-str
-                       (string-append "(~a "
-                                      (string-join (build-list (length arg-name-lst) (λ _ "~v")))
-                                      ")")])
+       (with-syntax* ([(struct-proc-names ...)
+                       (map (λ (arg-name) (format-id #'struct-name "~a-~a" #'struct-name arg-name))
+                            arg-name-lst)]
+                      [(proc-names ...)
+                       (map (λ (arg-name) (format-id #'name "~a-~a" #'name arg-name))
+                            arg-name-lst)])
          (syntax/loc stx
-           (begin
-             (struct: (A B) internal-type-name parent-type-name ([arg-names arg-opts ...] ...)
+           (begin-encourage-inline
+             (struct: (In Out) struct-name ordered-dist ([arg-names : arg-types] ...) struct-opts ...
                #:property prop:custom-print-quotable 'never
                #:property prop:custom-write
-               (λ (v port write?)
-                 (fprintf port format-str 'name (proc-names v) ...)))
-             (define-type (type-name T ...) (internal-type-name In Out))
-             (define proc-names internal-proc-names) ...
-             (define make-name internal-type-name)
-             (define pred-name internal-pred-name)))))]
-    [(_ type-name (parent-type-name In Out) name ([arg-names arg-opts ...] ...))
-     (syntax/loc stx
-       (define-distribution-type: (type-name) (parent-type-name In Out)
-         (A B) name ([arg-names arg-opts ...] ...)))]))
+               (λ (v port mode)
+                 (pretty-print-constructor 'name (list (struct-proc-names v) ...) port mode)))
+             (define-type type-name (struct-name Real Flonum))
+             (: proc-names (type-name -> arg-types)) ...
+             (define (proc-names v) (struct-proc-names v)) ...))))]))
 
 ;; ===================================================================================================
 ;; One-sided scale family distributions (e.g. exponential)

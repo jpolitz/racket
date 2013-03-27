@@ -1,5 +1,7 @@
 #lang racket/base
 
+;; Contract generation for Typed Racket
+
 (provide type->contract define/fixup-contract? change-contract-fixups)
 
 (require
@@ -127,7 +129,7 @@
         (loop t (not pos?) (not from-typed?) structs-seen kind))
       (define (t->c/fun f #:method [method? #f])
         (match f
-          [(Function: (list (top-arr:))) #'procedure?]
+          [(Function: (list (top-arr:))) (if pos? #'(case->) #'procedure?)]
           [(Function: arrs)
            (set-chaperone!)
            ;; Try to generate a single `->*' contract if possible.
@@ -142,26 +144,35 @@
                [_ #`(values #,@rngs*)]))
            (cond
             ;; To generate a single `->*', everything must be the same for all arrs, except for positional
-            ;; arguments which only need to be monotonically increasing.
+            ;; arguments which can increase by at most one each time.
+            ;; Note: optional arguments can only increase by 1 each time, to avoid problems with
+            ;;  functions that take, e.g., either 2 or 6 arguments. These functions shouldn't match,
+            ;;  since this code would generate contracts that accept any number of arguments between
+            ;;  2 and 6, which is wrong.
             ;; TODO sufficient condition, but may not be necessary
             [(and
               (> (length arrs) 1)
               ;; Keyword args, range and rest specs all the same.
-              (let ([xs (map (match-lambda [(arr: _ rng rest-spec _ kws)
-					    (list rng rest-spec kws)])
-			     arrs)])
-                (foldl equal? (first xs) (rest xs)))
-              ;; Positionals are monotonically increasing.
+              (let* ([xs (map (match-lambda [(arr: _ rng rest-spec _ kws)
+                                             (list rng rest-spec kws)])
+                              arrs)]
+                     [first-x (first xs)])
+                (for/and ([x (in-list (rest xs))])
+                  (equal? x first-x)))
+              ;; Positionals are monotonically increasing by at most one.
               (let-values ([(_ ok?)
-                            (for/fold ([positionals '()]
+                            (for/fold ([positionals (arr-dom (first arrs))]
                                        [ok-so-far?  #t])
-                                ([arr (in-list arrs)])
+                                ([arr (in-list (rest arrs))])
                               (match arr
                                 [(arr: dom _ _ _ _)
+                                 (define ldom         (length dom))
+                                 (define lpositionals (length positionals))
                                  (values dom
                                          (and ok-so-far?
-                                              (>= (length dom) (length positionals))
-                                              (equal? positionals (take dom (length positionals)))))]))])
+                                              (or (= ldom lpositionals)
+                                                  (= ldom (add1 lpositionals)))
+                                              (equal? positionals (take dom lpositionals))))]))])
                 ok?))
              (match* ((first arrs) (last arrs))
                [((arr: first-dom (Values: (list (Result: rngs (FilterSet: (Top:) (Top:)) (Empty:)) ...)) rst #f kws)
@@ -273,24 +284,28 @@
         [(== t:-NonPosRat type-equal?) #'(flat-named-contract 'Nonpositive-Rational (and/c t:exact-rational? (lambda (x) (<= x 0))))]
         [(== t:-Rat type-equal?) #'(flat-named-contract 'Rational t:exact-rational?)]
         [(== t:-FlonumZero type-equal?) #'(flat-named-contract 'Float-Zero (and/c flonum? zero?))]
-        [(== t:-NonNegFlonum type-equal?) #'(flat-named-contract 'Nonnegative-Float (and/c flonum? (lambda (x) (>= x 0))))]
-        [(== t:-NonPosFlonum type-equal?) #'(flat-named-contract 'Nonpositive-Float (and/c flonum? (lambda (x) (<= x 0))))]
+        [(== t:-NonNegFlonum type-equal?) #'(flat-named-contract 'Nonnegative-Float (and/c flonum? (lambda (x) (not (< x 0)))))]
+        [(== t:-NonPosFlonum type-equal?) #'(flat-named-contract 'Nonpositive-Float (and/c flonum? (lambda (x) (not (> x 0)))))]
+        [(== t:-NegFlonum type-equal?) #'(flat-named-contract 'Negative-Float (and/c flonum? (lambda (x) (not (>= x 0)))))]
+        [(== t:-PosFlonum type-equal?) #'(flat-named-contract 'Positive-Float (and/c flonum? (lambda (x) (not (<= x 0)))))]
         [(== t:-Flonum type-equal?) #'(flat-named-contract 'Float flonum?)]
         [(== t:-SingleFlonumZero type-equal?) #'(flat-named-contract 'Single-Flonum-Zero (and/c single-flonum? zero?))]
         [(== t:-InexactRealZero type-equal?) #'(flat-named-contract 'Inexact-Real-Zero (and/c inexact-real? zero?))]
-        [(== t:-PosInexactReal type-equal?) #'(flat-named-contract 'Positive-Inexact-Real (and/c inexact-real? positive?))]
-        [(== t:-NonNegSingleFlonum type-equal?) #'(flat-named-contract 'Nonnegative-Single-Flonum (and/c single-flonum? (lambda (x) (>= x 0))))]
-        [(== t:-NonNegInexactReal type-equal?) #'(flat-named-contract 'Nonnegative-Inexact-Real (and/c inexact-real? (lambda (x) (>= x 0))))]
-        [(== t:-NegInexactReal type-equal?) #'(flat-named-contract 'Negative-Inexact-Real (and/c inexact-real? negative?))]
-        [(== t:-NonPosSingleFlonum type-equal?) #'(flat-named-contract 'Nonpositive-Single-Flonum (and/c single-flonum? (lambda (x) (<= x 0))))]
-        [(== t:-NonPosInexactReal type-equal?) #'(flat-named-contract 'Nonpositive-Inexact-Real (and/c inexact-real? (lambda (x) (<= x 0))))]
+        [(== t:-PosSingleFlonum type-equal?) #'(flat-named-contract 'Positive-Single-Flonum (and/c single-flonum? (lambda (x) (not (<= x 0)))))]
+        [(== t:-PosInexactReal type-equal?) #'(flat-named-contract 'Positive-Inexact-Real (and/c inexact-real? (lambda (x) (not (<= x 0)))))]
+        [(== t:-NonNegSingleFlonum type-equal?) #'(flat-named-contract 'Nonnegative-Single-Flonum (and/c single-flonum? (lambda (x) (not (< x 0)))))]
+        [(== t:-NonNegInexactReal type-equal?) #'(flat-named-contract 'Nonnegative-Inexact-Real (and/c inexact-real? (lambda (x) (not (< x 0)))))]
+        [(== t:-NegSingleFlonum type-equal?) #'(flat-named-contract 'Negative-Single-Flonum (and/c single-flonum? (lambda (x) (not (>= x 0)))))]
+        [(== t:-NegInexactReal type-equal?) #'(flat-named-contract 'Negative-Inexact-Real (and/c inexact-real? (lambda (x) (not (>= x 0)))))]
+        [(== t:-NonPosSingleFlonum type-equal?) #'(flat-named-contract 'Nonpositive-Single-Flonum (and/c single-flonum? (lambda (x) (not (> x 0)))))]
+        [(== t:-NonPosInexactReal type-equal?) #'(flat-named-contract 'Nonpositive-Inexact-Real (and/c inexact-real? (lambda (x) (not (> x 0)))))]
         [(== t:-SingleFlonum type-equal?) #'(flat-named-contract 'Single-Flonum single-flonum?)]
         [(== t:-InexactReal type-equal?) #'(flat-named-contract 'Inexact-Real inexact-real?)]
         [(== t:-RealZero type-equal?) #'(flat-named-contract 'Real-Zero (and/c real? zero?))]
-        [(== t:-PosReal type-equal?) #'(flat-named-contract 'Positive-Real (and/c real? positive?))]
-        [(== t:-NonNegReal type-equal?) #'(flat-named-contract 'Nonnegative-Real (and/c real? (lambda (x) (>= x 0))))]
-        [(== t:-NegReal type-equal?) #'(flat-named-contract 'Negative-Real (and/c real? negative?))]
-        [(== t:-NonPosReal type-equal?) #'(flat-named-contract 'Nonpositive-Real (and/c real? (lambda (x) (<= x 0))))]
+        [(== t:-PosReal type-equal?) #'(flat-named-contract 'Positive-Real (and/c real? (lambda (x) (not (<= x 0)))))]
+        [(== t:-NonNegReal type-equal?) #'(flat-named-contract 'Nonnegative-Real (and/c real? (lambda (x) (not (< x 0)))))]
+        [(== t:-NegReal type-equal?) #'(flat-named-contract 'Negative-Real (and/c real? (lambda (x) (not (>= x 0)))))]
+        [(== t:-NonPosReal type-equal?) #'(flat-named-contract 'Nonpositive-Real (and/c real? (lambda (x) (not (> x 0)))))]
         [(== t:-Real type-equal?) #'(flat-named-contract 'Real real?)]
         [(== t:-ExactNumber type-equal?) #'(flat-named-contract 'Exact-Number (and/c number? exact?))]
         [(== t:-InexactComplex type-equal?)
@@ -317,7 +332,7 @@
         [(Vector: t)
          (set-chaperone!)
          #`(vectorof #,(t->c t))]
-        [(HeterogenousVector: ts)
+        [(HeterogeneousVector: ts)
          (set-chaperone!)
          #`(vector/c #,@(map t->c ts))]
         [(Box: t)
@@ -330,6 +345,13 @@
          #`(promise/c #,(t->c t))]
         [(Opaque: p? cert)
          #`(flat-named-contract (quote #,(syntax-e p?)) #,(cert p?))]
+        [(Continuation-Mark-Keyof: t)
+         (set-chaperone!)
+         #`(continuation-mark-key/c #,(t->c t))]
+        ;; TODO: this is not quite right for case->
+        [(Prompt-Tagof: s (Function: (list (arr: (list ts ...) _ _ _ _))))
+         (set-chaperone!)
+         #`(prompt-tag/c #,@(map t->c ts) #:call/cc #,(t->c s))]
         ;; TODO
         [(F: v) (cond [(assoc v (vars)) => second]
                       [else (int-err "unknown var: ~a" v)])]
@@ -404,7 +426,7 @@
         ;; TODO Is this sound?
 	[(Param: in out) 
 	 (set-impersonator!)
-	 #`(parameter/c #,(t->c out))]
+	 #`(parameter/c #,(t->c in) #,(t->c out))]
         [(Hashtable: k v)
          (when (equal? kind flat-sym) (exit (fail)))
          #`(hash/c #,(t->c k #:kind chaperone-sym) #,(t->c v) #:immutable 'dont-care)]

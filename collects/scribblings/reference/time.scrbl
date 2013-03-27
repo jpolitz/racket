@@ -51,8 +51,10 @@ reflects a date in UTC.}
                 #:inspector #f]{
 
 Represents a date. The @racket[second] field reaches @racket[60] only
-for leap seconds. The @racket[year-day] field reaches @racket[365]
-only in leap years.
+for leap seconds. The @racket[week-day] field is @racket[0] for
+Sunday, @racket[1] for Monday, etc. The @racket[year-day] field is
+@racket[0] for January 1, @racket[1] for January 2, @|etc|; the
+@racket[year-day] field reaches @racket[365] only in leap years.
 
 The @racket[dst?] field is @racket[#t] if the date reflects a
 daylight-saving adjustment. The @racket[time-zone-offset] field
@@ -152,7 +154,7 @@ result is the result of  the last @racket[body].}
 
 @defproc[(current-date) date*?]{
 
-An abbreviation for @racket[(seconds->date (current-seconds))].}
+An abbreviation for @racket[(seconds->date (* 0.001 (current-inexact-milliseconds)))].}
 
 @defproc[(date->string [date date?] [time? any/c #f]) string?]{
 
@@ -173,12 +175,19 @@ Parameter that determines the date string format. The initial format
 is @racket['american].}
 
 @defproc[(date->seconds [date date?] [local-time? any/c #t]) exact-integer?]{
-Finds the representation of a date in platform-specific seconds. 
-The @racket[time-zone-offset] field of @racket[date] is ignored;
-the date is assumed to be in local time by default or in UTC
-if @racket[local-time?] is @racket[#f]. If
-the platform cannot represent the specified date, an error is
-signaled, otherwise an integer is returned. }
+Finds the representation of a date in platform-specific seconds.
+If the platform cannot represent the specified date,
+@exnraise[exn:fail].
+
+The @racket[week-day], @racket[year-day] fields of @racket[date] are
+ignored.  The @racket[dst?] and @racket[time-zone-offset] fields of
+@racket[date] are also ignored; the date is assumed to be in local
+time by default or in UTC if @racket[local-time?] is @racket[#f].}
+
+@defproc[(date*->seconds [date date?] [local-time? any/c #t]) real?]{
+Like @racket[date->seconds], but returns an exact number that can
+include a fraction of a second based on @racket[(date*-nanosecond
+date)] if @racket[date] is a @racket[date*] instance.}
 
 @defproc[(find-seconds [second (integer-in 0 61)]
                        [minute (integer-in 0 59)]

@@ -16,12 +16,17 @@ This file defines two sorts of primitives. All of them are provided into any mod
    in order to protect the declarations, they are wrapped in `#%app void' so that local-expand of the module body
    will not expand them on the first pass of the macro expander (when the stop list is ignored)
 
+3. contracted versions of built-in racket values such as parameters and prompt tags
+   that are defined in "base-contracted.rkt"
+
 |#
 
 
 (provide (except-out (all-defined-out) dtsi* dtsi/exec* let-internal: define-for-variants define-for*-variants 
-                     with-handlers: for/annotation for*/annotation define-for/sum:-variants base-for/flvector: base-for/vector
+                     with-handlers: for/annotation for*/annotation define-for/acc:-variants base-for/flvector: base-for/vector
                      -lambda -define)
+         ;; provide the contracted bindings as primitives
+         (all-from-out "base-contracted.rkt")
          :
          (rename-out [define-typed-struct define-struct:]
                      [lambda: λ:]
@@ -37,11 +42,13 @@ This file defines two sorts of primitives. All of them are provided into any mod
          "colon.rkt"
          "../typecheck/internal-forms.rkt"
          (rename-in racket/contract/base [-> c->] [case-> c:case->])
+         ;; contracted bindings to replace built-in ones
+         (except-in "base-contracted.rkt" initialize-contracted)
          "base-types.rkt"
          "base-types-extra.rkt"
          racket/flonum ; for for/flvector and for*/flvector
          (for-syntax
-          unstable/lazy-require
+          racket/lazy-require
           syntax/parse
           racket/syntax
           racket/base
@@ -130,10 +137,6 @@ This file defines two sorts of primitives. All of them are provided into any mod
        (unless (< 0 (length (syntax->list #'(c ...))))
          (raise-syntax-error #f "at least one specification is required" stx))
        #`(begin c.spec ...)]
-      [(_ nm:opt-rename ty lib (~optional [~seq #:struct-maker parent]) ...)
-       #`(require/typed #:internal nm ty lib #,@(if (attribute parent)
-                                                    #'(#:struct-maker parent)
-                                                    #'()))]
       [(_ #:internal nm:opt-rename ty lib (~optional [~seq #:struct-maker parent]) ...)
        (with-syntax ([cnt* (generate-temporary #'nm.nm)]
                      [hidden (generate-temporary #'nm.nm)]
@@ -247,30 +250,33 @@ This file defines two sorts of primitives. All of them are provided into any mod
                    'typechecker:ignore-some #t)
              ty)))
 
-     (if (syntax-transforming-module-expression?)
-         (let ((ctc (syntax-local-lift-expression
-                       (syntax-property #'#f 'typechecker:contract-def #'ty))))
-           (define (check-valid-type _)
-             (define type (parse-type #'ty))
-             (define vars (fv type))
-             ;; If there was an error don't create another one
-             (unless (or (Error? type) (null? vars))
-               (tc-error/delayed
-                 "Type ~a could not be converted to a contract because it contains free variables."
-                 type)))
-             (syntax-property (apply-contract ctc)
-                              'typechecker:external-check check-valid-type))
-         (let ([typ (parse-type #'ty)])
-           (if (Error? typ)
-               ;; This code should never get run, typechecking will have an error earlier
-               #`(error 'cast "Couldn't parse type")
-               (apply-contract
-                 (type->contract
-                   typ
-                   ;; the value is not from the typed side
-                   #:typed-side #f
-                   (lambda ()
-                     (tc-error/stx #'ty "Type ~a could not be converted to a contract" typ)))))))]))
+     (cond [(not (unbox typed-context?)) ; no-check, don't check
+            #'v]
+           [(syntax-transforming-module-expression?)
+            (let ((ctc (syntax-local-lift-expression
+                        (syntax-property #'#f 'typechecker:contract-def #'ty))))
+              (define (check-valid-type _)
+                (define type (parse-type #'ty))
+                (define vars (fv type))
+                ;; If there was an error don't create another one
+                (unless (or (Error? type) (null? vars))
+                  (tc-error/delayed
+                   "Type ~a could not be converted to a contract because it contains free variables."
+                   type)))
+              (syntax-property (apply-contract ctc)
+                               'typechecker:external-check check-valid-type))]
+           [else
+            (let ([typ (parse-type #'ty)])
+              (if (Error? typ)
+                  ;; This code should never get run, typechecking will have an error earlier
+                  #`(error 'cast "Couldn't parse type")
+                  (apply-contract
+                   (type->contract
+                    typ
+                    ;; the value is not from the typed side
+                    #:typed-side #f
+                    (lambda ()
+                      (tc-error/stx #'ty "Type ~a could not be converted to a contract" typ))))))])]))
 
 
 (define-syntax (:type stx)
@@ -304,6 +310,8 @@ This file defines two sorts of primitives. All of them are provided into any mod
 (define-syntax (plambda: stx)
   (syntax-parse stx
     [(plambda: (tvars:id ...) formals . body)
+     #:fail-when (check-duplicate-identifier (syntax->list #'(tvars ...)))
+                 "duplicate type variable declaration"
      (quasisyntax/loc stx
        (#%expression
         #,(syntax-property (syntax/loc stx (lambda: formals . body))
@@ -313,6 +321,8 @@ This file defines two sorts of primitives. All of them are provided into any mod
 (define-syntax (pcase-lambda: stx)
   (syntax-parse stx
     [(pcase-lambda: (tvars:id ...) cl ...)
+     #:fail-when (check-duplicate-identifier (syntax->list #'(tvars ...)))
+                 "duplicate type variable declaration"
      (quasisyntax/loc stx
        (#%expression
         #,(syntax-property (syntax/loc stx (case-lambda: cl ...))
@@ -322,6 +332,8 @@ This file defines two sorts of primitives. All of them are provided into any mod
 (define-syntax (popt-lambda: stx)
   (syntax-parse stx
     [(popt-lambda: (tvars:id ...) formals . body)
+     #:fail-when (check-duplicate-identifier (syntax->list #'(tvars ...)))
+                 "duplicate type variable declaration"
      (quasisyntax/loc stx
        (#%expression
         #,(syntax-property (syntax/loc stx (opt-lambda: formals . body))
@@ -333,8 +345,9 @@ This file defines two sorts of primitives. All of them are provided into any mod
     [(pdefine: (tvars:id ...) (nm:id . formals:annotated-formals) : ret-ty . body)
      (with-syntax ([type (syntax/loc #'ret-ty (All (tvars ...) (formals.arg-ty ... -> ret-ty)))])
        (syntax/loc stx
-         (define: nm : type
-           (plambda: (tvars ...) formals . body))))]))
+         (begin
+          (: nm : type)
+          (define (nm . formals.ann-formals) . body))))]))
 
 (define-syntax (ann stx)
   (syntax-parse stx #:literals (:)
@@ -362,11 +375,18 @@ This file defines two sorts of primitives. All of them are provided into any mod
      (identifier? #'nm)
      (with-syntax ([new-nm (syntax-property #'nm 'type-label #'ty)])
        (syntax/loc stx (define new-nm body)))]
+    [(define: (tvars:id ...) nm:id : ty body)
+     (with-syntax ([type (syntax/loc #'ty (All (tvars ...) ty))])
+       (syntax/loc stx
+         (begin
+           (: nm : type)
+           (define nm body))))]
     [(define: (tvars:id ...) (nm:id . formals:annotated-formals) : ret-ty body ...)
      (with-syntax ([type (syntax/loc #'ret-ty (All (tvars ...) (formals.arg-ty ... -> ret-ty)))])
        (syntax/loc stx
-         (define: nm : type
-           (plambda: (tvars ...) formals body ...))))]))
+         (begin
+          (: nm : type)
+          (define (nm . formals.ann-formals) body ...))))]))
 
 (define-syntax (lambda: stx)
   (syntax-parse stx
@@ -401,8 +421,30 @@ This file defines two sorts of primitives. All of them are provided into any mod
 
 (define-syntax (let: stx)
   (syntax-parse stx #:literals (:)
-    [(let: nm:id ~! : ret-ty (bs:annotated-binding ...) . body)
-     (syntax/loc stx ((letrec: ([nm : (bs.ty ... -> ret-ty) (lambda (bs.ann-name ...) . body)]) nm) bs.rhs ...))]
+    [(let: nm:id ~! ; named let:
+           (~and (~seq rest ...)
+                 (~seq (~optional (~seq : ret-ty))
+                       (bs:optionally-annotated-binding ...) body ...)))
+     (quasisyntax/loc stx
+       (#,(syntax-parse #'(rest ...)
+            #:literals (:)
+            [(: ret-ty (bs:annotated-binding ...) . body)
+             (quasisyntax/loc stx
+               (letrec: ([nm : (bs.ty ... -> ret-ty)
+                             #,(quasisyntax/loc stx
+                                 (lambda (bs.ann-name ...) . #,(syntax/loc stx body)))])
+                        #,(quasisyntax/loc stx nm)))]
+            [(: ret-ty (bs:optionally-annotated-binding ...) . body)
+             (quasisyntax/loc stx
+               (letrec ([nm #,(quasisyntax/loc stx
+                                (lambda (bs.ann-name ...) . (ann #,(syntax/loc stx body) ret-ty)))])
+                 #,(quasisyntax/loc stx nm)))]
+            [((bs:optionally-annotated-binding ...) . body)
+             (quasisyntax/loc stx
+               (letrec ([nm #,(quasisyntax/loc stx
+                                (lambda (bs.ann-name ...) . #,(syntax/loc stx body)))])
+                 #,(quasisyntax/loc stx nm)))])
+        bs.rhs ...))]
     [(let: . rest)
      (syntax/loc stx (let-internal: . rest))]))
 
@@ -586,6 +628,10 @@ This file defines two sorts of primitives. All of them are provided into any mod
                       [extra-maker (and (attribute input-maker.extra)
                                         (not (bound-identifier=? #'make-name #'nm))
                                         #'maker-name)])
+                     (define (extract-struct-info* id)
+                       (syntax-parse id #:context stx
+                        [(~var id (static struct-info? "identifier bound to a structure type"))
+                         (extract-struct-info (syntax-local-value #'parent))]))
                      (quasisyntax/loc stx
                        (begin
                          (require (only-in lib type-des (nm orig-struct-info)))
@@ -610,7 +656,7 @@ This file defines two sorts of primitives. All of them are provided into any mod
                               #,(if (syntax-e #'parent)
                                     (let-values (((parent-type-des parent-maker parent-pred
                                                    parent-sel  parent-mut grand-parent)
-                                                  (apply values (extract-struct-info (syntax-local-value #'parent)))))
+                                                  (apply values (extract-struct-info* #'parent))))
                                       #`(list (quote-syntax type-des)
                                               (quote-syntax real-maker)
                                               (quote-syntax pred)
@@ -633,12 +679,12 @@ This file defines two sorts of primitives. All of them are provided into any mod
                          (dtsi* () spec ([fld : ty] ...) #:maker maker-name #:type-only)
                          #,(ignore #'(require/contract pred hidden (any/c . c-> . boolean?) lib))
                          #,(internal #'(require/typed-internal hidden (Any -> Boolean : nm)))
-                         (require/typed (maker-name real-maker) nm lib #:struct-maker parent)
+                         (require/typed #:internal (maker-name real-maker) nm lib #:struct-maker parent)
 
                          ;This needs to be a different identifier to meet the specifications
                          ;of struct (the id constructor shouldn't expand to it)
                          #,(if (syntax-e #'extra-maker)
-                               #'(require/typed (maker-name extra-maker) nm lib #:struct-maker parent)
+                               #'(require/typed #:internal (maker-name extra-maker) nm lib #:struct-maker parent)
                                #'(begin))
 
                          (require/typed lib
@@ -652,11 +698,13 @@ This file defines two sorts of primitives. All of them are provided into any mod
         ((var:optionally-annotated-name rest ...) ...)
         (stop?:expr ret ...)
         c:expr ...)
-     (syntax/loc
+     (quasisyntax/loc
          stx
-       (ann (do ((var.ann-name rest ...) ...)
-                (stop? ret ...)
-              c ...)
+       (ann #,(syntax/loc
+                  stx
+                (do ((var.ann-name rest ...) ...)
+                    (stop? ret ...)
+                  c ...))
             ty))]))
 
 ;; wrap the original for with a type annotation
@@ -678,44 +726,54 @@ This file defines two sorts of primitives. All of them are provided into any mod
     ;; the annotation is not necessary (always of Void type), but kept
     ;; for consistency with the other for: macros
     [(_ (~seq : Void) ...
-        clauses ; no need to annotate the type, it's always Void
-        c:expr ...)
-     (let ((body (syntax-property #'(c ...) 'type-ascription #'Void)))
+        ;; c is not always an expression, could be a break-clause
+        clauses c ...) ; no need to annotate the type, it's always Void
+     (let ((body #`(; break-clause ...
+                    #,@(syntax-property #'(c ...) 'type-ascription #'Void))))
        (let loop ((clauses #'clauses))
-         (define-syntax-class for-clause
+         (define-splicing-syntax-class for-clause
            ;; single-valued seq-expr
            ;; unlike the definitions in for-clauses.rkt, this does not include
            ;; #:when clauses, which are handled separately here
-           (pattern (var:optionally-annotated-name seq-expr:expr)
-                    #:with expand #'(var.ann-name seq-expr))
+           (pattern (~seq (var:optionally-annotated-name seq-expr:expr))
+                    #:with (expand ...) #'((var.ann-name seq-expr)))
            ;; multi-valued seq-expr
            ;; currently disabled because it triggers an internal error in the typechecker
-           #;(pattern ((v:optionally-annotated-name ...) seq-expr:expr)
-                    #:with expand #'((v.ann-name ...) seq-expr)))
+           ;; (pattern ((v:optionally-annotated-name ...) seq-expr:expr)
+           ;;          #:with (expand ...) #'(((v.ann-name ...) seq-expr)))
+           ;; break-clause, pass it directly
+           ;; Note: these don't ever typecheck
+           (pattern (~seq (~and kw (~or #:break #:final)) guard-expr:expr)
+                    #:with (expand ...) #'(kw guard-expr)))
+         (define-syntax-class for-kw
+           (pattern #:when
+                    #:with replace-with #'when)
+           (pattern #:unless
+                    #:with replace-with #'unless))
          (syntax-parse clauses
-           [(head:for-clause next:for-clause ... #:when rest ...)
+           [(head:for-clause next:for-clause ... kw:for-kw rest ...)
             (syntax-property
              (quasisyntax/loc stx
                (for
-                (head.expand next.expand ...)
-                #,(loop #'(#:when rest ...))))
+                (head.expand ... next.expand ... ...)
+                #,(loop #'(kw rest ...))))
              'type-ascription
              #'Void)]
            [(head:for-clause ...) ; we reached the end
             (syntax-property
              (quasisyntax/loc stx
                (for
-                (head.expand ...)
+                (head.expand ... ...)
                 #,@body))
              'type-ascription
              #'Void)]
-           [(#:when guard) ; we end on a #:when clause
+           [(kw:for-kw guard) ; we end on a keyword clause
             (quasisyntax/loc stx
-              (when guard
+              (kw.replace-with guard
                 #,@body))]
-           [(#:when guard rest ...)
+           [(kw:for-kw guard rest ...)
             (quasisyntax/loc stx
-              (when guard
+              (kw.replace-with guard
                 #,(loop #'(rest ...))))])))]))
 
 (define-for-syntax (maybe-annotate-body body ty)
@@ -733,8 +791,8 @@ This file defines two sorts of primitives. All of them are provided into any mod
   (lambda (stx)
     (syntax-parse stx #:literals (:)
       [(_ a:optional-standalone-annotation
-          (clause:for-clause ...)
-          c:expr ...)
+          clause:for-clauses
+          c ...) ; c is not always an expression, can be a break-clause
        (maybe-annotate-body
         (quasisyntax/loc stx
           (#,name
@@ -749,18 +807,15 @@ This file defines two sorts of primitives. All of them are provided into any mod
      (quasisyntax/loc
          stx
        (begin (define-syntax name (define-for-variant #'untyped-name)) ...))]))
-;; for/hash{,eq,eqv}:, for/vector:, for/flvector:, for/and:, for/first: and
+
+;; for/vector:, for/flvector:, for/and:, for/first: and
 ;; for/last:'s expansions can't currently be handled by the typechecker.
 (define-for-variants
   (for/list: for/list)
-  (for/hash: for/hash)
-  (for/hasheq: for/hasheq)
-  (for/hasheqv: for/hasheqv)
   (for/and: for/and)
   (for/or: for/or)
   (for/first: for/first)
-  (for/last: for/last)
-  (for/product: for/product))
+  (for/last: for/last))
 
 ;; Unlike with the above, the inferencer can handle any number of #:when
 ;; clauses with these 2.
@@ -768,8 +823,8 @@ This file defines two sorts of primitives. All of them are provided into any mod
   (syntax-parse stx #:literals (:)
     [(_ : ty
         ((var:optionally-annotated-name) ...)
-        (clause:for-clause ...)
-        c:expr ...)
+        clause:for-clauses
+        c ...) ; c is not always an expression, can be a break-clause
      (syntax-property
       (quasisyntax/loc stx
         (for/lists (var.ann-name ...)
@@ -778,8 +833,8 @@ This file defines two sorts of primitives. All of them are provided into any mod
       'type-ascription
       #'ty)]
     [(_ ((var:annotated-name) ...)
-        (clause:for-clause ...)
-        c:expr ...)
+        clause:for-clauses
+        c ...)
      (syntax-property
       (quasisyntax/loc stx
         (for/lists (var.ann-name ...)
@@ -791,8 +846,8 @@ This file defines two sorts of primitives. All of them are provided into any mod
   (syntax-parse stx #:literals (:)
     [(_ : ty
         ((var:optionally-annotated-name init:expr) ...)
-        (clause:for-clause ...)
-        c:expr ...)
+        clause:for-clauses
+        c ...) ; c is not always an expression, can be a break-clause
      (syntax-property
       (quasisyntax/loc stx
         (for/fold ((var.ann-name init) ...)
@@ -800,25 +855,25 @@ This file defines two sorts of primitives. All of them are provided into any mod
           c ...))
       'type-ascription
       #'ty)]
-    [(_ ((var:annotated-name init:expr) ...)
-        (clause:for-clause ...)
-        c:expr ...)
+    [(_ accum:accumulator-bindings
+        clause:for-clauses
+        c ...)
      (syntax-property
       (quasisyntax/loc stx
-        (for/fold ((var.ann-name init) ...)
+        (for/fold ((accum.ann-name accum.init) ...)
           (clause.expand ... ...)
           c ...))
       'type-ascription
-      #'(values var.ty ...))]))
+      #'(values accum.ty ...))]))
 
 
 (define-syntax (for*: stx)
   (syntax-parse stx #:literals (:)
     [(_ (~seq : Void) ...
-        (clause:for*-clause ...)
-        c:expr ...)
+        clause:for-clauses
+        c ...) ; c is not always an expression, can be a break-clause
      (quasisyntax/loc stx
-       (for: (clause.expand ... ...)
+       (for: (clause.expand* ... ...)
              c ...))]))
 
 ;; These currently only typecheck in very limited cases.
@@ -826,8 +881,8 @@ This file defines two sorts of primitives. All of them are provided into any mod
   (lambda (stx)
     (syntax-parse stx #:literals (:)
       [(_ a:optional-standalone-annotation
-          (clause:for-clause ...)
-          c:expr ...)
+          clause:for-clauses
+          c ...) ; c is not always an expression, can be a break-clause
        (maybe-annotate-body
         (quasisyntax/loc stx
           (#,name (clause.expand ... ...)
@@ -842,36 +897,32 @@ This file defines two sorts of primitives. All of them are provided into any mod
               ...))]))
 (define-for*-variants
   (for*/list: for*/list)
-  (for*/hash: for*/hash)
-  (for*/hasheq: for*/hasheq)
-  (for*/hasheqv: for*/hasheqv)
   (for*/and: for*/and)
   (for*/or: for*/or)
   (for*/first: for*/first)
-  (for*/last: for*/last)
-  (for*/product: for*/product))
+  (for*/last: for*/last))
 
 ;; Like for/lists: and for/fold:, the inferencer can handle these correctly.
 (define-syntax (for*/lists: stx)
   (syntax-parse stx #:literals (:)
     [(_ : ty
         ((var:optionally-annotated-name) ...)
-        (clause:for*-clause ...)
-        c:expr ...)
+        clause:for-clauses
+        c ...) ; c is not always an expression, can be a break-clause
      (syntax-property
       (quasisyntax/loc stx
         (for/lists (var.ann-name ...)
-          (clause.expand ... ...)
+          (clause.expand* ... ...)
           c ...))
       'type-ascription
       #'ty)]
     [(_ ((var:annotated-name) ...)
-        (clause:for*-clause ...)
-        c:expr ...)
+        clause:for-clauses
+        c ...)
      (syntax-property
       (quasisyntax/loc stx
         (for/lists (var.ann-name ...)
-          (clause.expand ... ...)
+          (clause.expand* ... ...)
           c ...))
       'type-ascription
       #'(values var.ty ...))]))
@@ -879,50 +930,99 @@ This file defines two sorts of primitives. All of them are provided into any mod
   (syntax-parse stx #:literals (:)
     [(_ : ty
         ((var:optionally-annotated-name init:expr) ...)
-        (clause:for*-clause ...)
-        c:expr ...)
+        clause:for-clauses
+        c ...) ; c is not always an expression, can be a break-clause
      (syntax-property
       (quasisyntax/loc stx
         (for/fold ((var.ann-name init) ...)
-          (clause.expand ... ...)
+          (clause.expand* ... ...)
           c ...))
       'type-ascription
       #'ty)]
     [(_ ((var:annotated-name init:expr) ...)
-        (clause:for*-clause ...)
-        c:expr ...)
+        clause:for-clauses
+        c ...)
      (syntax-property
       (quasisyntax/loc stx
         (for/fold ((var.ann-name init) ...)
-          (clause.expand ... ...)
+          (clause.expand* ... ...)
           c ...))
       'type-ascription
       #'(values var.ty ...))]))
 
-
-(define-for-syntax (define-for/sum:-variant for/folder)
+(define-for-syntax (define-for/acc:-variant for*? for/folder: for/folder op initial)
   (lambda (stx)
     (syntax-parse stx #:literals (:)
-      [(_ : ty
-          (clause:for-clause ...)
-          c:expr ...)
-       ;; ty has to include exact 0, the initial value of the accumulator
-       ;; (to be consistent with Racket semantics).
-       ;; We can't just change the initial value to be 0.0 if we expect a
-       ;; Float result. This is problematic in some cases e.g:
-       ;; (for/sum: : Float ([i : Float '(1.1)] #:when (zero? (random 1))) i)
-       (quasisyntax/loc stx
-         (#,for/folder : ty ([acc : ty 0])
-                       (clause.expand ... ...)
-                       (let ([new (let () c ...)])
-                         (+ acc new))))])))
-(define-syntax (define-for/sum:-variants stx)
+      [(_ a:optional-standalone-annotation
+          clause:for-clauses
+          c ...) ; c is not always an expression, can be a break-clause
+       (cond
+        [(syntax-e #'a.ty)
+         ;; ty has to include exact 0 or exact 1 (sum/product respectively),
+         ;; the initial value of the accumulator
+         ;; (to be consistent with Racket semantics).
+         ;; We can't just change the initial value to be 0.0 if we expect a
+         ;; Float result. This is problematic in some cases e.g:
+         ;; (for/sum: : Float ([i : Float '(1.1)] #:when (zero? (random 1))) i)
+         (quasisyntax/loc stx
+           (#,for/folder: : a.ty ([acc : a.ty #,initial])
+                         (clause.expand ... ...)
+                         (let ([new (let () c ...)])
+                           (#,op acc new))))]
+        ;; With no annotation, try our luck with the core form.
+        ;; Exact base cases cause problems, thus the additional
+        ;; annotation on the accumulator above.
+        [for*? ((define-for*-variant for/folder) stx)]
+        [else ((define-for-variant for/folder) stx)])])))
+(define-syntax (define-for/acc:-variants stx)
   (syntax-parse stx
-    [(_ (name for/folder) ...)
+    [(_ (name for/folder: for/folder for*? op initial) ...)
      (quasisyntax/loc stx
-       (begin (define-syntax name (define-for/sum:-variant #'for/folder))
+       (begin (define-syntax name
+                (define-for/acc:-variant
+                  for*? #'for/folder: #'for/folder #'op #'initial))
               ...))]))
-(define-for/sum:-variants (for/sum: for/fold:) (for*/sum: for*/fold:))
+(define-for/acc:-variants
+  (for/sum: for/fold: for/sum #f + 0)
+  (for*/sum: for*/fold: for*/sum #t + 0)
+  (for/product: for/fold: for/product #f * 1)
+  (for*/product: for*/fold: for*/product #t * 1))
+
+(define-for-syntax (define-for/hash:-variant hash-maker)
+  (lambda (stx)
+    (syntax-parse stx
+      #:literals (:)
+      ((_ (~seq : return-annotation:expr)
+          (bind:optionally-annotated-binding ...)
+          body ...) ; body is not always an expression, can be a break-clause
+       (quasisyntax/loc stx
+         (for/fold: : return-annotation
+           ((return-hash : return-annotation (ann (#,hash-maker null) return-annotation)))
+           (bind ...)
+           (let-values (((key val) (let () body ...)))
+             (hash-set return-hash key val))))))))
+
+(define-syntax for/hash:    (define-for/hash:-variant #'make-immutable-hash))
+(define-syntax for/hasheq:  (define-for/hash:-variant #'make-immutable-hasheq))
+(define-syntax for/hasheqv: (define-for/hash:-variant #'make-immutable-hasheqv))
+
+(define-for-syntax (define-for*/hash:-variant hash-maker)
+  (lambda (stx)
+    (syntax-parse stx
+      #:literals (:)
+      ((_ (~seq : return-annotation:expr)
+          (bind:optionally-annotated-binding ...)
+          body ...) ; body is not always an expression, can be a break-clause
+       (quasisyntax/loc stx
+         (for*/fold: : return-annotation
+           ((return-hash : return-annotation (ann (#,hash-maker null) return-annotation)))
+           (bind ...)
+           (let-values (((key val) (let () body ...)))
+             (hash-set return-hash key val))))))))
+
+(define-syntax for*/hash:    (define-for*/hash:-variant #'make-immutable-hash))
+(define-syntax for*/hasheq:  (define-for*/hash:-variant #'make-immutable-hasheq))
+(define-syntax for*/hasheqv: (define-for*/hash:-variant #'make-immutable-hasheqv))
 
 
 (define-syntax (provide: stx)
@@ -951,7 +1051,18 @@ This file defines two sorts of primitives. All of them are provided into any mod
     [(_ formals . body)
      (define d (datum->syntax stx `(,#'λ ,#'formals . ,#'body)
                               stx stx))
-     (syntax-property d 'kw-lambda #t)]))
+     (define-values (has-kw? has-opt?)
+       (syntax-parse #'formals
+        ((~or (~and rest:id (~bind ((args 1) null)))
+              (args ...)
+              (args ...+ . rest:id))
+         (define arg-list (syntax->list #'(args ...)))
+         (values
+           (ormap keyword? (map syntax-e arg-list))
+           (ormap syntax->list arg-list)))))
+      (syntax-property
+        (syntax-property d 'kw-lambda has-kw?)
+        'opt-lambda has-opt?)]))
 
 ;; do this ourselves so that we don't get the static bindings,
 ;; which are harder to typecheck

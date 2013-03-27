@@ -83,9 +83,10 @@
           (sort-toolbar-buttons-panel)))
       (super-new)
       (inherit get-button-panel)
-      (set! toolbar-button-panel (new horizontal-panel% 
+      (set! toolbar-button-panel (new panel:horizontal-discrete-sizes% 
                                       [parent (get-button-panel)]
-                                      [stretchable-width #f]))
+                                      [alignment '(right center)]
+                                      [stretchable-width #t]))
       (after-initialized)
       (set! after-initialized void)
       
@@ -319,4 +320,10 @@
       [else
        (set! online-expansion-handlers
              (cons (online-expansion-handler mod-path id local-handler)
-                   online-expansion-handlers))])))
+                   online-expansion-handlers))]))
+  
+  (define online-expansion-pref-funcs '())
+  (define (get-online-expansion-pref-funcs) online-expansion-pref-funcs)
+    (define online-expansion-prefs '())
+  (define (register-online-expansion-pref func)
+    (set! online-expansion-pref-funcs (cons func online-expansion-pref-funcs))))

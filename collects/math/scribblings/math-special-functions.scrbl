@@ -2,7 +2,7 @@
 
 @(require scribble/eval
           racket/sandbox
-          (for-label racket/base
+          (for-label racket/base racket/unsafe/ops
                      math plot
                      (only-in typed/racket/base
                               Flonum Real Integer Natural Zero Positive-Integer Exact-Rational
@@ -331,7 +331,7 @@ is defined in terms of @racket[gamma-inc] and is more flexible (e.g. it allows n
 
 The following identities should hold:
 @itemlist[
-@item{@racket[(gamma-inc k x) = 0]}
+@item{@racket[(gamma-inc k 0) = 0]}
 @item{@racket[(gamma-inc k +inf.0) = (gamma k)]}
 @item{@racket[(+ (gamma-inc k x #f) (gamma-inc k x #t)) = (gamma k)] (approximately)}
 @item{@racket[(gamma-inc k x upper? #t) = (/ (gamma-inc k x upper? #f) (gamma k))] (approximately)}

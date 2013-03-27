@@ -410,6 +410,10 @@
   (parameterize ([current-subprocess-custodian-mode 'interrupt])
     (try (if (eq? 'windows (system-type)) 'running 'done-error) #t)))
 
+;; check that #f is an allowed mode:
+(parameterize ([current-subprocess-custodian-mode #f])
+  (test #f current-subprocess-custodian-mode))
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; process groups
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -457,5 +461,7 @@
     (test 3 system/exit-code "exit 3")))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(for ([f (list tmpfile tmpfile2)] #:when (file-exists? f)) (delete-file f))
 
 (report-errs)

@@ -6,8 +6,8 @@
 @(define-syntax def-section-like
    (syntax-rules ()
      [(_ id result/c x ...)
-      (defproc (id [#:tag tag (or/c false/c string? (listof string?)) #f]
-                   [#:tag-prefix tag-prefix (or/c false/c string? module-path?) #f]
+      (defproc (id [#:tag tag (or/c #f string? (listof string?)) #f]
+                   [#:tag-prefix tag-prefix (or/c #f string? module-path?) #f]
                    [#:style style (or/c style? #f string? symbol? (listof symbol?)) #f]
                    [pre-content pre-content?] (... ...+))
         result/c
@@ -60,11 +60,11 @@ have @racketmodname[scribble/manual]).
 
 @section{Document Structure}
 
-@defproc[(title [#:tag tag (or/c false/c string? (listof string?)) #f]
-                [#:tag-prefix tag-prefix (or/c false/c string? module-path?) #f]
+@defproc[(title [#:tag tag (or/c #f string? (listof string?)) #f]
+                [#:tag-prefix tag-prefix (or/c #f string? module-path?) #f]
                 [#:style style (or/c style? #f string? symbol? (listof symbol?)) #f]
-                [#:version vers (or/c string? false/c) #f]
-                [#:date date (or/c string? false/c) #f]
+                [#:version vers (or/c string? #f) #f]
+                [#:date date (or/c string? #f) #f]
                 [pre-content pre-content?] ...+)
          title-decl?]{
 
@@ -148,7 +148,7 @@ combination with @racket[author].}
 
 @section{Blocks}
 
-@defproc[(para [#:style style (or/c style? string? symbol? #f)] 
+@defproc[(para [#:style style (or/c style? string? symbol? #f) #f] 
                [pre-content pre-content?] ...) paragraph?]{
 
  Creates a @tech{paragraph} containing the @tech{decode}d
@@ -161,7 +161,7 @@ combination with @racket[author].}
   @racket[style] arguments.)}
 
 
-@defproc[(nested [#:style style (or/c style? string? symbol? #f)] 
+@defproc[(nested [#:style style (or/c style? string? symbol? #f) #f] 
                  [pre-flow pre-flow?] ...) nested-flow?]{
 
  Creates a @tech{nested flow} containing the @tech{decode}d
@@ -373,9 +373,10 @@ See also @racket[verbatim].}
  @racket[pre-content] serves as the alternate text for contexts where
  the image cannot be displayed.
 
- The path is relative to the current directory, which is set by
- @exec{setup-plt} and @exec{scribble} to the directory of the main
- document file. The @racket[path] argument also can be a result of
+ If @racket[path] is a relative path, it is relative to the current
+ directory, which is set by @exec{raco setup} and @exec{scribble} to
+ the directory of the main document file. Instead of a path or string,
+ the @racket[path] argument can be a result of
  @racket[path->main-collects-relative].
  
  The strings in @racket[suffixes] are filtered to those supported by
@@ -470,8 +471,8 @@ Generates a literal hyperlinked URL.}
 
 
 @defproc[(secref [tag string?]
-                 [#:doc module-path (or/c module-path? false/c) #f]
-                 [#:tag-prefixes prefixes (or/c (listof string?) false/c) #f]
+                 [#:doc module-path (or/c module-path? #f) #f]
+                 [#:tag-prefixes prefixes (or/c (listof string?) #f) #f]
                  [#:underline? underline? any/c #t])
          element?]{
 
@@ -508,8 +509,8 @@ title after the section number. Customize the output (see
 
 
 @defproc[(Secref [tag string?]
-                 [#:doc module-path (or/c module-path? false/c) #f]
-                 [#:tag-prefixes prefixes (or/c (listof string?) false/c) #f]
+                 [#:doc module-path (or/c module-path? #f) #f]
+                 [#:tag-prefixes prefixes (or/c (listof string?) #f) #f]
                  [#:underline? underline? any/c #t])
          element?]{
 
@@ -518,8 +519,8 @@ with a word (e.g., ``section''), then the word is capitalized.}
 
 
 @defproc[(seclink [tag string?] 
-                  [#:doc module-path (or/c module-path? false/c) #f]
-                  [#:tag-prefixes prefixes (or/c (listof string?) false/c) #f]
+                  [#:doc module-path (or/c module-path? #f) #f]
+                  [#:tag-prefixes prefixes (or/c (listof string?) #f) #f]
                   [#:underline? underline? any/c #t]
                   [pre-content pre-content?] ...) element?]{
 
@@ -548,11 +549,6 @@ The tag @racket[t] refers to the content form of
 
 The @tech{decode}d @racket[pre-content] is hyperlinked to @racket[t],
 which is normally defined using @racket[elemtag].}
-
-@defproc[(module-path-prefix->string [mod-path module-path?]) string?]{
-
-Converts a module path to a string by resolving it to a path, and
-using @racket[path->main-collects-relative].}
 
 @; ------------------------------------------------------------------------
 
@@ -601,7 +597,7 @@ section by @racket[decode]. The @racket[word]s serve as both the keys
 and as the rendered forms of the keys within the index.}
 
 
-@defproc[(index-section [#:tag tag (or/c false/c string?) "doc-index"])
+@defproc[(index-section [#:tag tag (or/c #f string?) "doc-index"])
          part?]{
 
 Produces a part that shows the index the enclosing document. The
@@ -634,3 +630,11 @@ also the @racket['quiet] style of @racket[part] (i.e., in a
 @racket[part] structure, not supplied as the @racket[style] argument
 to @racket[local-table-of-contents]), which normally suppresses
 sub-part entries in a table of contents.}
+
+@; ------------------------------------------------------------------------
+
+@section{Tags}
+
+The exports of @racketmodname[scribble/tag] are all re-exported by
+@racketmodname[scribble/base].
+

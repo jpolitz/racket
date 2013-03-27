@@ -784,5 +784,71 @@
   (module m 'local-expand-lang2))
 
 ;; ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; check that quoted submodule paths work with `all-from-out':
+
+(module has-submodule-all-from-out racket/base
+  (module a racket/base
+    (define x-from-submodule-out 10)
+    (provide x-from-submodule-out))
+  
+  (require 'a)
+  (void x-from-submodule-out)
+  (provide (all-from-out 'a)))
+(require 'has-submodule-all-from-out)
+(test 10 values x-from-submodule-out)
+
+;; ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; check `syntax-local-submodules' (and `syntax-local-module-exports'
+;; for submodules) in compile and expand modes
+
+(let ([e '(module x racket/base
+            (require (for-syntax racket/base))
+            
+            (module m racket/base)
+            
+            (define-syntax (m stx)
+              (syntax-local-module-exports ''m) ; should succeed
+              #`(quote #,(syntax-local-submodules)))
+            
+            (define x (m))
+            x
+            (provide x))])
+  (parameterize ([current-namespace (make-base-namespace)])
+    (eval e)
+    (test '(m) dynamic-require ''x 'x))
+  (parameterize ([current-namespace (make-base-namespace)])
+    (eval (expand e))
+    (test '(m) dynamic-require ''x 'x)))
+
+;; ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; check context on `#%module-begin' for a subform
+
+(module check-submodule-module-begin '#%kernel
+  (module mb racket/base
+    (require (for-syntax racket/base))
+    (provide (except-out (all-from-out racket/base) #%module-begin)
+             (rename-out [module-begin #%module-begin]))
+    (define-syntax (module-begin stx)
+      #`(#%module-begin #,(datum->syntax stx ;; should have initial imports
+                                         '(provide (all-defined-out))))))
+  (module n (submod ".." mb)
+    (void)
+    (void)))
+
+;; ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Check phase-level-2 submodules:
+
+(module check-module-meta-2 racket
+  (require (for-meta 2 racket/base))
+  
+  (begin-for-syntax
+   (begin-for-syntax
+    (module* main #f
+      (define v 'ok)
+      (provide v)))))
+
+(test 'ok dynamic-require '(submod 'check-module-meta-2 main) 'v)
+
+;; ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (report-errs)

@@ -32,6 +32,7 @@
   (import [prefix drracket:debug: drracket:debug^]
           [prefix drracket:tools: drracket:tools^]
           [prefix drracket:rep: drracket:rep^]
+          [prefix drracket:init: drracket:init^]
           [prefix drracket:help-desk: drracket:help-desk^])
   (export drracket:language^)
   
@@ -646,14 +647,7 @@
         (module-based-language-front-end port (get-reader)))
       (define/public (front-end/interaction port settings)
         (module-based-language-front-end port (get-reader)))
-      (define/public (create-executable setting parent program-filename)
-        (create-module-based-language-executable parent 
-                                                 program-filename
-                                                 (get-module)
-                                                 (get-transformer-module)
-                                                 (get-init-code setting)
-                                                 (use-mred-launcher)
-                                                 (use-namespace-require/copy-from-setting? setting)))
+      (define/public (create-executable setting parent program-filename) (void))
       (define/public (extra-repl-information _1 _2) (void))
       (define/public (get-reader-module) #f)
       (define/public (get-metadata a b) #f)
@@ -689,16 +683,28 @@
                   [(launcher) create-module-based-launcher]
                   [(stand-alone) create-module-based-stand-alone-executable]
                   [(distribution) create-module-based-distribution])])
-          (create-executable
-           program-filename
-           executable-filename
-           module-language-spec
-           transformer-module-language-spec
-           init-code
-           (if (boolean? mred-launcher)
-               mred-launcher
-               (eq? base 'mred))
-           use-copy?)))))
+          (with-handlers ((exn:fail? (λ (msg)
+                                       (define sp (open-output-string))
+                                       (parameterize ([current-error-port sp])
+                                         (drracket:init:original-error-display-handler
+                                          (exn-message exn)
+                                          exn))
+                                       (message-box 
+                                        (string-constant drscheme)
+                                        (string-append
+                                         (string-constant error-creating-executable)
+                                         "\n\n"
+                                         (get-output-string sp))))))
+            (create-executable
+             program-filename
+             executable-filename
+             module-language-spec
+             transformer-module-language-spec
+             init-code
+             (if (boolean? mred-launcher)
+                 mred-launcher
+                 (eq? base 'mred))
+             use-copy?))))))
   
   
   ;; create-executable-gui : (union #f (is-a?/c top-level-area-container<%>))
@@ -851,7 +857,7 @@
     ;; ask-user-can-clobber-directory? : (is-a?/c top-level-window<%>) string -> boolean
     (define (ask-user-can-clobber? filename)
       (eq? (message-box (string-constant drscheme)
-                        (format (string-constant are-you-sure-delete?) filename)
+                        (format (string-constant are-you-sure-replace?) filename)
                         dlg
                         '(yes-no)
                         #:dialog-mixin frame:focus-table-mixin)

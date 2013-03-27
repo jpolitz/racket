@@ -1,6 +1,7 @@
 #lang typed/racket/base
 
-(require (only-in "mpfr.rkt" 1ary-funs 1ary-preds 1ary2-funs 2ary-funs)
+(require racket/flonum
+         (only-in "mpfr.rkt" 1ary-funs 1ary-preds 1ary2-funs 2ary-funs)
          "../base/base-random.rkt"
          "utils.rkt")
 
@@ -8,8 +9,6 @@
 
 (require/typed
  "mpfr.rkt"
- ;; Library stuffs
- [mpfr-available?  (-> Boolean)]
  ;; Parameters
  [bf-rounding-mode  (Parameterof Rounding-Mode)]
  [bf-min-precision  Exact-Positive-Integer]
@@ -20,22 +19,23 @@
  [bfcanonicalize  (Bigfloat -> Bigfloat)]
  ;; Accessors
  [bigfloat-precision    (Bigfloat -> Exact-Positive-Integer)]
- [bigfloat-sign         (Bigfloat -> (U 0 1))]
+ [bigfloat-signbit      (Bigfloat -> (U 0 1))]
  [bigfloat-exponent     (Bigfloat -> Integer)]
- [bigfloat-sig+exp      (Bigfloat -> (Values Integer Integer))]
  [bigfloat-significand  (Bigfloat -> Integer)]
- ;; Conversion to and from Real
- [bigfloat->flonum    (Bigfloat -> Float)]
+ ;; Conversions from Bigfloat
+ [bigfloat->sig+exp   (Bigfloat -> (Values Integer Integer))]
+ [bigfloat->flonum    (Bigfloat -> Flonum)]
  [bigfloat->integer   (Bigfloat -> Integer)]
  [bigfloat->rational  (Bigfloat -> Exact-Rational)]
  [bigfloat->real      (Bigfloat -> (U Exact-Rational Flonum))]
- [flonum->bigfloat    (Float -> Bigfloat)]
+ [bigfloat->string    (Bigfloat -> String)]
+ ;; Conversions to Bigfloat
+ [sig+exp->bigfloat   (Integer Integer -> Bigfloat)]
+ [flonum->bigfloat    (Flonum -> Bigfloat)]
  [integer->bigfloat   (Integer -> Bigfloat)]
  [rational->bigfloat  (Exact-Rational -> Bigfloat)]
  [real->bigfloat      (Real -> Bigfloat)]
- ;; String conversion
- [bigfloat->string  (Bigfloat -> String)]
- [string->bigfloat  (String -> (U #f Bigfloat))]
+ [string->bigfloat    (String -> (U #f Bigfloat))]
  ;; Main constructor
  [bf  (case-> ((U String Real) -> Bigfloat)
               (Integer Integer -> Bigfloat))]
@@ -48,7 +48,7 @@
  [bfsum  ((Listof Bigfloat) -> Bigfloat)]
  [bfmax2  (Bigfloat Bigfloat -> Bigfloat)]
  [bfmin2  (Bigfloat Bigfloat -> Bigfloat)]
- [bfeqv?  (Bigfloat Bigfloat -> Boolean)]
+ [bf=?    (Bigfloat Bigfloat -> Boolean)]
  [bflt?   (Bigfloat Bigfloat -> Boolean)]
  [bflte?  (Bigfloat Bigfloat -> Boolean)]
  [bfgt?   (Bigfloat Bigfloat -> Boolean)]
@@ -126,7 +126,7 @@
     (: bfpred? (Bigfloat Bigfloat * -> Boolean))
     (define (bfpred? x . xs) (fold-binary-pred bfpred2? x xs))))
 
-(define-nary-pred bf=  bfeqv?)
+(define-nary-pred bf=  bf=?)
 (define-nary-pred bf<  bflt?)
 (define-nary-pred bf<= bflte?)
 (define-nary-pred bf>  bfgt?)
@@ -140,15 +140,20 @@
 (: bigfloat->fl2 (Bigfloat -> (Values Flonum Flonum)))
 (define (bigfloat->fl2 x)
   (define x2 (bigfloat->flonum x))
-  (values x2 (bigfloat->flonum (bf- x (flonum->bigfloat x2)))))
+  (cond [(rational? x2)
+         (let ([x2  (+ x2 (bigfloat->flonum (bf- x (flonum->bigfloat x2))))])
+           (cond [(rational? x2)
+                  (values x2 (bigfloat->flonum (bf- x (flonum->bigfloat x2))))]
+                 [else
+                  (values x2 0.0)]))]
+        [else  (values x2 0.0)]))
 
 (: fl2->bigfloat (Flonum Flonum -> Bigfloat))
 (define (fl2->bigfloat x2 x1)
-  (bf+ (flonum->bigfloat x1) (flonum->bigfloat x2)))
+  (cond [(fl= x1 0.0)  (bf x2)]
+        [else  (bf+ (flonum->bigfloat x1) (flonum->bigfloat x2))]))
 
 (provide
- ;; Library stuffs
- mpfr-available?
  ;; Parameters
  bf-rounding-mode
  bf-min-precision
@@ -159,24 +164,25 @@
  bfcanonicalize
  ;; Accessors
  bigfloat-precision
- bigfloat-sign
+ bigfloat-signbit
  bigfloat-exponent
- bigfloat-sig+exp
+ bigfloat->sig+exp
  bigfloat-significand
- ;; Conversion to and from Real
+ ;; Conversions
+ sig+exp->bigfloat
  flonum->bigfloat
  integer->bigfloat
  rational->bigfloat
  real->bigfloat
  fl2->bigfloat
+ string->bigfloat
  bigfloat->flonum
  bigfloat->integer
  bigfloat->rational
  bigfloat->real
  bigfloat->fl2
- ;; String conversion
  bigfloat->string
- string->bigfloat
+ bigfloat->sig+exp
  ;; Main constructor
  bf
  ;; Functions with non-uniform types

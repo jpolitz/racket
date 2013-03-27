@@ -42,7 +42,7 @@ but roughly by quoting the source term with
 hyperlinked via @racket[for-label] imports.
 
 The two different approaches to typesetting code---@racket[codeblock]
-and @racket[code] versus @racket[racketbock] and
+and @racket[code] versus @racket[racketblock] and
 @racket[racket]---have different advantages and disadvantages:
 
 @itemlist[
@@ -446,8 +446,11 @@ Racket. This procedure is useful for typesetting things like
 @defproc[(racketvalfont [pre-content pre-content?] ...) element?]{Like
 @racket[racketfont], but colored as a value.}
 
-@defproc[(racketresultfont [pre-content pre-content?] ...) element?]{Like
-@racket[racketfont], but colored as a REPL result.}
+@defproc[(racketresultfont [#:decode? decode? boolean? #t] [pre-content pre-content?] ...) element?]{
+  Like @racket[racketfont], but colored as a REPL result when @racket[decode?] is
+  @racket[#t]. When @racket[decode?] is @racket[#f], it also avoids @racket[decode]ing
+  its argument.
+}
 
 @defproc[(racketidfont [pre-content pre-content?] ...) element?]{Like
 @racket[racketfont], but colored as an identifier.}
@@ -1037,18 +1040,26 @@ Like @racket[defparam], but the contract on a parameter argument is
 @racket[boolean?].}
 
 
-@defform[(defthing maybe-kind id contract-expr-datum pre-flow ...)]{
+@defform/subs[(defthing maybe-kind maybe-id id contract-expr-datum
+                pre-flow ...)
+              ([maybe-kind code:blank
+                           (code:line #:kind kind-string-expr)]
+               [maybe-id code:blank
+                         (code:line #:id id-expr)])]{
 
 Like @racket[defproc], but for a non-procedure binding.
 
-If @racket[#:kind kind-string-expr] is supplied as
-@racket[maybe-kind], it is used in the same way as for
+If @racket[#:kind kind-string-expr] is supplied,
+it is used in the same way as for
 @racket[defproc], but the default kind is @racket["value"].
+
+If @racket[#:id id-expr] is supplied, then the result of
+@racket[id-expr] is used in place of @racket[id].
 
 Examples:
 @codeblock[#:keep-lang-line? #f]|{
 #lang scribble/manual
-@defthing[moldy-sandwich sandwich?]
+@defthing[moldy-sandwich sandwich?]{
   Don't eat this. Provided for backwards compatibility.
 }
 }|
@@ -1407,6 +1418,7 @@ Alias of @racket[hyperlink] for backward compatibility.}
 Alias of @racket[other-doc] for backward compatibility.}
 
 @defproc[(deftech [pre-content pre-content?] ...
+                  [#:key key (or/c string? #f) #f]
                   [#:normalize? normalize? any/c #t]
                   [#:style? style? any/c #t]) element?]{
 
@@ -1414,9 +1426,10 @@ Produces an element for the @tech{decode}d @racket[pre-content], and
 also defines a term that can be referenced elsewhere using
 @racket[tech].
 
-The @racket[content->string] result of the @tech{decode}d
-@racket[pre-content] is used as a key for references; if
-@racket[normalize?] is true, then the string is normalized as follows:
+When @racket[key] is @racket[#f], the @racket[content->string] result
+of the @tech{decode}d @racket[pre-content] is used as a key for
+references. If @racket[normalize?] is true, then the key string is
+normalized as follows:
 
 @itemize[
 

@@ -101,7 +101,7 @@ of printing enclosing datatypes, a symbol is @tech{quotable}.
 
 A @tech{number} prints the same way in @racket[write], @racket[display], and
 @racket[print] modes. For the purposes of printing enclosing
-datatypes, a symbol is @tech{quotable}.
+datatypes, a number is @tech{quotable}.
 
 A @tech{complex number} that is not a @tech{real number} always prints
 as @nonterm{m}@litchar{+}@nonterm{n}@litchar{i}, where @nonterm{m} and
@@ -125,6 +125,19 @@ determined by @racket[numerator] and @racket[denominator]).
 
 A negative @tech{exact number} prints with a @litchar{-} prefix on the
 printed form of the number's exact negation.
+
+@section[#:tag "print-extflonum"]{Printing Extflonums}
+
+An @tech{extflonum} prints the same way in @racket[write],
+@racket[display], and @racket[print] modes. For the purposes of
+printing enclosing datatypes, an extflonum is @tech{quotable}.
+
+An extflonum prints in the same way an inexact number, but
+always with a @litchar{t} or @litchar{T} exponent marker. When
+extflonum operations are supported, printing always uses
+@litchar{t}; when extflonum operations are not supported, an
+extflonum prints the same as its reader (see @secref["reader"])
+source, since reading is the only way to produce an extflonum.
 
 @section[#:tag "print-booleans"]{Printing Booleans}
 
@@ -274,6 +287,16 @@ all @tech{quotable}, then the vector @racket[print]s as
 @litchar["(vector "], the elements at @tech{quoting depth} @racket[0],
 and a closing @litchar{)}. A vector is @tech{quotable} when all of
 its elements are @tech{quotable}.
+
+In @racket[write] or @racket[display] mode, an @tech{flvector} prints
+like a @tech{vector}, but with a @litchar{#fl} prefix instead of
+@litchar{#}. A @tech{fxvector} similarly prints with a @litchar{#fx}
+prefix instead of @litchar{#}. The @racket[print-vector-length]
+parameter affects @tech{flvector} and @tech{fxvector} printing the
+same as @tech{vector} printing. In @racket[print] mode,
+@tech{flvectors} and @tech{fxvectors} are not @tech{quotable}, and
+they print like a @tech{vector} at @tech{quoting depth} 0 using a
+@litchar["(flvector "] or @litchar["(fxvector "] prefix, respectively.
 
 
 @section[#:tag "print-structure"]{Printing Structures}

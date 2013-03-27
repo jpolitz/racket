@@ -154,7 +154,8 @@ Optional @filepath{info.rkt} fields trigger additional actions by
      [doc (list src-string)
           (list src-string flags)
           (list src-string flags category)
-          (list src-string flags category name-string)]
+          (list src-string flags category name-string)
+          (list src-string flags category name-string out-k)]
      [flags (list mode-symbol ...)]
      [category (list category-symbol)
                (list category-symbol sort-number)]
@@ -271,9 +272,15 @@ Optional @filepath{info.rkt} fields trigger additional actions by
    alphabetically. For a pair of manuals with sorting numbers
    @racket[_n] and @racket[_m], the groups for the manuals are
    separated by space if @racket[(truncate (/ _n 10))]and
-   @racket[(truncate (/ _m 10))] are different.}
+   @racket[(truncate (/ _m 10))] are different.
 
- @item{@racket[racket-launcher-names] : @racket[(listof string?)]
+   The @racket[_out-k] specification is a hint on whether to break the
+   document's cross-reference information into multiple parts, which
+   can reduce the time and memory use for resolving a cross-reference
+   into the document. It must be a positive, exact integer, and the
+   default is @racket[1].}
+
+ @item{@indexed-racket[racket-launcher-names] : @racket[(listof string?)]
    --- @elemtag["racket-launcher-names"] A list of executable names
    to be generated in the installation's executable directory to run
    Racket-based programs implemented by the collection. A parallel
@@ -308,40 +315,40 @@ Optional @filepath{info.rkt} fields trigger additional actions by
    name for @racket[build-aux-from-path] (to find related information
    like icon files etc).}
 
- @item{@racket[racket-launcher-libraries] : @racket[(listof
+ @item{@indexed-racket[racket-launcher-libraries] : @racket[(listof
    path-string?)] --- A list of library names in parallel to
    @elemref["racket-launcher-names"]{@racket[racket-launcher-names]}.}
 
- @item{@racket[racket-launcher-flags] : @racket[(listof string?)]
+ @item{@indexed-racket[racket-launcher-flags] : @racket[(listof string?)]
    --- A list of command-line flag lists, in parallel to
    @elemref["racket-launcher-names"]{@racket[racket-launcher-names]}.}
 
- @item{@racket[mzscheme-launcher-names],
+ @item{@indexed-racket[mzscheme-launcher-names],
    @racket[mzscheme-launcher-libraries], and
    @racket[mzscheme-launcher-flags] --- Backward-compatible variant of
    @racket[racket-launcher-names], etc.}
 
- @item{@racket[gracket-launcher-names] : @racket[(listof string?)]  ---
+ @item{@indexed-racket[gracket-launcher-names] : @racket[(listof string?)]  ---
    @elemtag["gracket-launcher-names"] Like
    @elemref["racket-launcher-names"]{@racket[racket-launcher-names]},
    but for GRacket-based executables. The launcher-name list is treated
    in parallel to @racket[gracket-launcher-libraries] and
    @racket[gracket-launcher-flags].}
 
- @item{@racket[gracket-launcher-libraries] : @racket[(listof path-string?)]
+ @item{@indexed-racket[gracket-launcher-libraries] : @racket[(listof path-string?)]
    --- A list of library names in parallel to
    @elemref["gracket-launcher-names"]{@racket[gracket-launcher-names]}.}
 
- @item{@racket[gracket-launcher-flags] : @racket[(listof string?)] --- A
+ @item{@indexed-racket[gracket-launcher-flags] : @racket[(listof string?)] --- A
    list of command-line flag lists, in parallel to
    @elemref["gracket-launcher-names"]{@racket[gracket-launcher-names]}.}
 
- @item{@racket[mred-launcher-names],
+ @item{@indexed-racket[mred-launcher-names],
    @racket[mred-launcher-libraries], and
    @racket[mred-launcher-flags] --- Backward-compatible variant of
    @racket[gracket-launcher-names], etc.}
 
- @item{@racket[install-collection] : @racket[path-string?]  --- A
+ @item{@indexed-racket[install-collection] : @racket[path-string?]  --- A
    library module relative to the collection that provides
    @racket[installer]. The @racket[installer] procedure accepts either
    one or two arguments. The first argument is a directory path to the
@@ -351,14 +358,14 @@ Optional @filepath{info.rkt} fields trigger additional actions by
    installation work, and it should avoid unnecessary work in the case
    that it is called multiple times for the same installation.}
 
- @item{@racket[pre-install-collection] : @racket[path-string?] ---
+ @item{@indexed-racket[pre-install-collection] : @racket[path-string?] ---
    Like @racket[install-collection], except that the corresponding
    installer is called @emph{before} the normal @filepath{.zo} build,
    instead of after. The provided procedure should be named
    @racket[pre-installer] in this case, so it can be provided by the
    same file that provides an @racket[installer].}
 
- @item{@racket[post-install-collection] : @racket[path-string?]  ---
+ @item{@indexed-racket[post-install-collection] : @racket[path-string?]  ---
    Like @racket[install-collection]. It is called right after the
    @racket[install-collection] procedure is executed. The only
    difference between these is that the @DFlag{no-install} flag can be
@@ -369,7 +376,7 @@ Optional @filepath{info.rkt} fields trigger additional actions by
    case, so it can be provided by the same file that provides the
    previous two.}
 
- @item{@racket[clean] : @racket[(listof path-string?)] ---
+ @item{@indexed-racket[clean] : @racket[(listof path-string?)] ---
    @elemtag["clean"] A list of pathnames to be deleted when the
    @DFlag{clean} or @Flag{c} flag is passed to @exec{raco setup}. The
    pathnames must be relative to the collection. If any path names a
@@ -404,6 +411,55 @@ Optional @filepath{info.rkt} fields trigger additional actions by
 
 @section[#:tag "setup-plt-plt"]{API for Installation}
 
+@defmodule[setup/setup]
+
+@defproc[(setup [#:file file (or/c #f path-string?) #f]
+                [#:collections collections (or/c #f (listof (listof path-string?))) #f]
+                [#:planet-specs planet-specs (or/c #f 
+                                                   (listof (list/c string?
+                                                                   string?
+                                                                   exact-nonnegative-integer?
+                                                                   exact-nonnegative-integer?)))
+                                             #f]
+                [#:make-user? make-user? any/c #t]
+                [#:make-docs? make-docs? any/c #t]
+                [#:clean? clean? any/c #f]
+                [#:jobs jobs exact-nonnegative-integer? #f]
+                [#:get-target-dir get-target-dir (or/c #f (-> path-string?)) #f])
+          void?]{
+Runs @exec{raco setup} with various options:
+
+@itemlist[
+
+ @item{@racket[file] --- if not @racket[#f], installs @racket[file] as
+       a @filepath{.plt} archive.}
+
+ @item{@racket[collections] --- if not @racket[#f], constrains setup to
+       the named collections, along with @racket[planet-specs], if any}
+
+ @item{@racket[planet-spec] --- if not @racket[#f], constrains setup to
+       the named @|PLaneT| packages, along with @racket[collections], if any}
+
+ @item{@racket[make-docs?] --- if @racket[#f], disables any
+       documentation-specific setup actions}
+
+ @item{@racket[make-user?] --- if @racket[#f], disables any
+       user-specific setup actions}
+
+ @item{@racket[clean?] --- if true, enables cleaning mode instead of setup mode}
+
+ @item{@racket[jobs] --- if not @racket[#f], determines the maximum number of parallel
+       tasks used for setup}
+
+ @item{@racket[get-target-dir] --- if not @racket[#f], treated as a
+       value for @sigelem[setup-option^ current-target-directory-getter]}
+
+]}
+
+@subsection{@exec{raco setup} Unit}
+
+@defmodule[setup/setup-unit]
+
 The @racketmodname[setup/setup-unit] library provides @exec{raco setup} in unit
 form. The associated @racket[setup/option-sig] and
 @racket[setup/option-unit] libraries provides the interface for
@@ -426,10 +482,6 @@ initialized between them, e.g.:
     [() setup@ OPTIONS _...])
   _...)
 ]
-
-@subsection{@exec{raco setup} Unit}
-
-@defmodule[setup/setup-unit]
 
 @defthing[setup@ unit?]{
 
@@ -566,7 +618,7 @@ form.}
   documentation is built, then suitable documentation start pages, search pages,
   and master index pages are re-built. @defaults[@racket[#t]]}
 
-@defparam[current-target-directory-getter thunk (-> . path-string?)]{
+@defparam[current-target-directory-getter thunk (-> path-string?)]{
   A thunk that returns the target directory for unpacking a relative
   @filepath{.plt} archive; when unpacking an archive, either this or
   the procedure in @racket[current-target-plt-directory-getter] will
@@ -810,8 +862,8 @@ Imports @racket[mred^] and exports @racket[setup:plt-installer^]. }
    and calls @racket[get-info/full] with the full path corresponding to the
    named collection and the @racket[namespace] argument.}
 
-@defproc[(get-info/full [path path?]
-                         [#:namespace namespace (or/c namespace? #f) #f])
+@defproc[(get-info/full [path path-string?]
+                        [#:namespace namespace (or/c namespace? #f) #f])
          (or/c
           (symbol? [(-> any)] . -> . any)
           false/c)]{

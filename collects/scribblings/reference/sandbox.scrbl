@@ -226,9 +226,9 @@ of communication makes it impossible to have nested (or concurrent)
 calls to a single evaluator.  Usually this is not a problem, but in
 some cases you can get the evaluator function available inside the
 sandboxed code, for example:
-@racketblock[
+@interaction[#:eval box-eval
 (let ([e (make-evaluator 'racket/base)])
-  (e (,e 1)))
+  (e `(,e 1)))
 ]
 An error will be signaled in such cases.
 
@@ -931,11 +931,15 @@ evaluator.  The call is performed under the resource limits and
 evaluation handler that are used for evaluating expressions, unless
 @racket[unrestricted?] is specified as true.
 
-This process is usually similar to @racket[(evaluator (list thunk))], except
-that it relies on the common meaning of list expressions as function
-application (which is not true in all languages), and it relies on
-@racket[eval] allowing non-S-expression input.  In
-addition, you can avoid some of the sandboxed restrictions by using
+This process is usually similar to @racket[(evaluator (list thunk))],
+except that it does not rely on the common meaning of a sexpr-based
+syntax with list expressions as function application (which is not true
+in all languages).  Note that this is more useful for meta-level
+operations such as namespace manipulation, it is not intended to be used
+as a safe-evaluation replacement (i.e., using the sandbox evaluator as
+usual).
+
+In addition, you can avoid some of the sandboxed restrictions by using
 your own permissions, for example,
 @racketblock[
   (let ([guard (current-security-guard)])

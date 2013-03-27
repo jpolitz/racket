@@ -1,5 +1,5 @@
-#lang scheme/base
-(require "test-utils.rkt" (for-syntax scheme/base)
+#lang racket/base
+(require "test-utils.rkt" (for-syntax racket/base)
          (utils tc-utils)
          (env type-alias-env type-env-structs tvar-env type-name-env init-envs)
          (rep type-rep)
@@ -8,7 +8,8 @@
          (base-env base-types base-types-extra colon)
          (for-template (base-env base-types base-types-extra base-env colon))
          (private parse-type)
-         rackunit)
+         rackunit
+         racket/dict)
 
 (provide parse-type-tests)
 
@@ -42,7 +43,16 @@
                 (parse-type (syntax ty))))]))
 
 (define-syntax (pt-test stx)
-  (syntax-case stx ()
+  (syntax-case stx (FAIL)
+    [(_ FAIL ty-stx)
+     (syntax/loc stx (pt-test FAIL ty-stx initial-tvar-env))]
+    [(_ FAIL ty-stx tvar-env)
+     (quasisyntax/loc stx
+       (test-exn #,(format "~a" (syntax->datum #'ty-stx))
+                 exn:fail:syntax?
+                 (parameterize ([current-tvars tvar-env]
+                                [delay-errors? #f])
+                   (lambda () (parse-type (quote-syntax ty-stx))))))]
     [(_ ts tv) (syntax/loc stx (pt-test ts tv initial-tvar-env))]
     [(_ ty-stx ty-val tvar-env)
      (quasisyntax/loc
@@ -65,6 +75,9 @@
 (define (parse-type-tests)
   (pt-tests
    "parse-type tests"
+   [FAIL UNBOUND]
+   [FAIL List]
+   [FAIL (All (A) (List -> Boolean))]
    [Number N]
    [Any Univ]
    [(List Number String) (-Tuple (list N -String))]
@@ -109,7 +122,7 @@
 
    [(Listof Number) (make-Listof  N)]
 
-   [a (-v a) (cons 'a initial-tvar-env)]
+   [a (-v a) (dict-set initial-tvar-env 'a (-v a))]
    [(All (a ...) (a ... -> Number))
     (-polydots (a) ((list) [a a] . ->... . N))]
 

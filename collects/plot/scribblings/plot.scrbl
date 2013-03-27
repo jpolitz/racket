@@ -9,6 +9,10 @@
 
 @defmodule[plot]
 
+Typed Racket users should use
+
+@defmodule*/no-declare[(plot/typed)]
+
 @(plot-name) provides a flexible interface for producing nearly any kind of plot.
 It includes many common kinds already, such as scatter plots, line plots, contour plots, histograms, and 3D surfaces and isosurfaces.
 Thanks to Racket's excellent multiple-backend drawing library, @(plot-name) can render plots as manipulatable images in DrRacket, as bitmaps in slideshows, as PNG, PDF, PS and SVG files, or on any device context.

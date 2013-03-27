@@ -14,6 +14,7 @@
            setup/getinfo
            setup/xref
            scribble/xref
+           scribble/tag
            net/url
            syntax/toplevel
            browser/external
@@ -43,13 +44,13 @@
                     [(shift) (send evt get-shiftdown)]
                     [(option) (send evt get-alt-down)]))
                 shortcut-prefix))
-    (values (string-append (string-constant the-racket-language)
-                           (format " (~aR)" menukey-string))
-            (string-append (string-constant teaching-languages)
-                           (format " (~aT)" menukey-string))
-            (string-append (string-constant other-languages)
-                           (format " (~aO)" menukey-string))
-            mouse-event-uses-shortcut-prefix?)))
+      (values (string-append (string-constant the-racket-language)
+                             (format " (~aR)" menukey-string))
+              (string-append (string-constant teaching-languages)
+                             (format " (~aT)" menukey-string))
+              (string-append (string-constant other-languages)
+                             (format " (~aO)" menukey-string))
+              mouse-event-uses-shortcut-prefix?)))
   
   (provide language-configuration@)
   
@@ -83,26 +84,35 @@
     ;; all of the languages supported in DrRacket
     (define languages null)
     
+    (define languages-allowing-executable-creation '())
+    (define (language-allows-executable-creation? candidate-lang)
+      (define candidates-positions (send candidate-lang get-language-position))
+      (for/or ([allowed-lang (in-list languages-allowing-executable-creation)])
+        (equal? (send allowed-lang get-language-position)
+                candidates-positions)))
+    
     ;; add-language : (instanceof language%) -> void
     ;; only allows addition on phase2
     ;; effect: updates `languages'
-    (define add-language
-      (λ (language [front? #f])
-        
-        (drracket:tools:only-in-phase 'drracket:language:add-language 'phase2)
-        (for-each
-         (λ (i<%>)
-           (unless (is-a? language i<%>)
-             (error 'drracket:language:add-language
-                    "expected language ~e to implement ~e, forgot to use `drracket:language:get-default-mixin'?"
-                    language i<%>)))
-         (drracket:language:get-language-extensions))
-        
-        (ensure-no-duplicate-numbers language languages)
-        (set! languages 
-              (if front? 
-                  (cons language languages)
-                  (append languages (list language))))))
+    (define (add-language language [front? #f] #:allow-executable-creation? [allow-executable-creation? #f])
+      
+      (drracket:tools:only-in-phase 'drracket:language:add-language 'phase2)
+      (for-each
+       (λ (i<%>)
+         (unless (is-a? language i<%>)
+           (error 'drracket:language:add-language
+                  "expected language ~e to implement ~e, forgot to use `drracket:language:get-default-mixin'?"
+                  language i<%>)))
+       (drracket:language:get-language-extensions))
+      
+      (ensure-no-duplicate-numbers language languages)
+      (when allow-executable-creation?
+        (set! languages-allowing-executable-creation
+              (cons language languages-allowing-executable-creation)))
+      (set! languages 
+            (if front? 
+                (cons language languages)
+                (append languages (list language)))))
     
     (define (ensure-no-duplicate-numbers l1 languages)
       (for-each
@@ -425,15 +435,18 @@
                  (define-values (ex ey) (send (get-editor) dc-location-to-editor-location
                                               (send evt get-x) 
                                               (send evt get-y)))
-                 (set!-values (hieritem-language-to-show-in-tooltip
-                               hieritem-tooltip-x
-                               hieritem-tooltip-y
-                               hieritem-tooltip-w
-                               hieritem-tooltip-h)
-                              (find-snip ex ey))
-                 (when tooltip-frame (send tooltip-frame show #f))
-                 (send tooltip-timer stop)
-                 (when hieritem-language-to-show-in-tooltip (send tooltip-timer start 200 #t))]
+                 (define-values (_to-show-in-tooltip _x _y _w _h)
+                   (find-snip ex ey))
+                 (unless (equal? _to-show-in-tooltip
+                                 hieritem-language-to-show-in-tooltip)
+                   (set! hieritem-language-to-show-in-tooltip _to-show-in-tooltip)
+                   (set! hieritem-tooltip-x _x)
+                   (set! hieritem-tooltip-y _y)
+                   (set! hieritem-tooltip-w _w)
+                   (set! hieritem-tooltip-h _h)
+                   (when tooltip-frame (send tooltip-frame show #f))
+                   (send tooltip-timer stop)
+                   (when hieritem-language-to-show-in-tooltip (send tooltip-timer start 200 #t)))]
                 [(send evt leaving?)
                  (set! hieritem-language-to-show-in-tooltip #f)
                  (send tooltip-timer stop)]))
@@ -462,8 +475,10 @@
                       (define-values (x y) (client->screen
                                             (inexact->exact (round (unbox bl)))
                                             (inexact->exact (round (unbox bt)))))
+                      (define-values (dl dt) (get-display-left-top-inset))
                       (values (send snip get-item)
-                              x y
+                              (- x dl)
+                              (- y dt)
                               (inexact->exact (round w))
                               (inexact->exact (round h)))]
                      [(is-a? snip editor-snip%)
@@ -495,13 +510,7 @@
                   (send tooltip-frame set-tooltip (list msg))
                   (send tooltip-frame show-over 
                         (+ hieritem-tooltip-x hieritem-tooltip-w 4)
-                        
-                        ;; why do I have to subtract here...?
-                        ;; that's definitely wrong. Something else
-                        ;; must be wrong earlier to get these bad
-                        ;; coordinates
-                        (- hieritem-tooltip-y hieritem-tooltip-h)
-                        
+                        hieritem-tooltip-y
                         0 
                         0))))
                  
@@ -1176,9 +1185,11 @@
         ;; remove the newline at the front of the first inlined category (if there)
         ;; it won't be there if the module language is at the top.
         (for ([hier-list (in-list (list other-languages-hier-list teaching-languages-hier-list))])
-          (define t (send (car (send hier-list get-items)) get-editor))
-          (when (equal? "\n" (send t get-text 0 1))
-            (send t delete 0 1)))
+          (define items (send hier-list get-items))
+          (unless (null? items)
+            (define t (send (car items) get-editor))
+            (when (equal? "\n" (send t get-text 0 1))
+              (send t delete 0 1))))
         
         (send details-outer-panel stretchable-width #f)
         (send details/manual-parent-panel change-children 
@@ -1215,7 +1226,7 @@
                 (get/set-selected-language-settings)))
          (λ (receiver evt)
            (case (send evt get-key-code)
-             [(#\u) 
+             [(#\r) 
               (if (mouse-event-uses-shortcut-prefix? evt)
                   (begin (send use-language-in-source-rb set-selection 0)
                          (use-language-in-source-rb-callback)
@@ -1269,14 +1280,6 @@
         (unless (null? (cdr strs))
           (do-insert "#lang" #t)
           (loop (cdr strs))))
-      
-      (define xref-chan (make-channel))
-      (thread
-       (λ ()
-         (define xref (load-collections-xref))
-         (let loop ()
-           (channel-put xref-chan xref)
-           (loop))))
       
       (define spacer-snips '())
       (define spacer-poses '())
@@ -1349,7 +1352,8 @@
                   [else (void)])))
         (send t set-clickback before-docs after-docs 
               (λ (t start end)
-                (define-values (path tag) (xref-tag->path+anchor (channel-get xref-chan) `(mod-path ,(symbol->string lang))))
+                (define-values (path tag) (xref-tag->path+anchor (load-collections-xref) 
+                                                                 (make-module-language-tag lang)))
                 (define url (path->url path))
                 (define url2 (if tag
                                  (make-url (url-scheme url)
@@ -1961,25 +1965,6 @@
                         [else (inner
                                (drracket:language:get-capability-default key)
                                capability-value key)]))
-                    (define/override (create-executable setting parent program-filename)
-                      (let ([executable-fn
-                             (drracket:language:put-executable
-                              parent
-                              program-filename
-                              #t
-                              mred-launcher?
-                              (if mred-launcher?
-                                  (string-constant save-a-mred-launcher)
-                                  (string-constant save-a-mzscheme-launcher)))])
-                        (when executable-fn
-                          (drracket:language:create-module-based-launcher
-                           program-filename
-                           executable-fn
-                           (get-module)
-                           (get-transformer-module)
-                           (get-init-code setting)
-                           mred-launcher?
-                           (use-namespace-require/copy-from-setting? setting)))))
                     (super-new))))]
              [make-simple
               (λ (module id position numbers mred-launcher? one-line-summary extra-mixin)

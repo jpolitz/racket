@@ -2,10 +2,11 @@
 (require racket/place
          racket/port
          "eval-helpers.rkt"
-         compiler/cm)
+         compiler/cm
+         syntax/readerr)
 (provide start)
 
-(struct job (cust response-pc working-thd))
+(struct job (cust response-pc working-thd stop-watching-abnormal-termination))
 
 ;; key : any (used by equal? for comparision, but back in the main place)
 (struct handler (key proc))
@@ -70,12 +71,12 @@
                    (continuation-marks 
                     (job-working-thd job))))
     (ep-log-info (format "expanding-place.rkt: kill; worker-thd stack (size ~a) dead? ~a:" 
-                      (length stack)
-                      (thread-dead? (job-working-thd job))))
+                         (length stack)
+                         (thread-dead? (job-working-thd job))))
     (for ([x (in-list stack)])
       (ep-log-info (format "  ~s" x))))
-  (custodian-shutdown-all (job-cust job))
-  (place-channel-put (job-response-pc job) #f))
+  ((job-stop-watching-abnormal-termination job))
+  (custodian-shutdown-all (job-cust job)))
 
 (struct exn:access exn:fail ())
 
@@ -87,6 +88,8 @@
   (define abnormal-termination (make-channel))
   (define the-source (or path "unsaved editor"))
   (define orig-cust (current-custodian))
+  (define (stop-watching-abnormal-termination) 
+    (channel-put normal-termination #t))
   
   (define working-thd
     (parameterize ([current-custodian cust])
@@ -96,6 +99,24 @@
          (define sema (make-semaphore 0))
          (ep-log-info "expanding-place.rkt: 02 setting basic parameters")
          (set-basic-parameters/no-gui)
+         
+         (define loaded-paths '())
+         (define original-path (make-parameter #f))
+         (current-load/use-compiled
+          (let ([ol (current-load/use-compiled)])
+            (λ (path mod-name)
+              (parameterize ([original-path path])
+                (ol path mod-name)))))
+         (current-load
+          (let ([cl (current-load)])
+            (λ (path mod-name)
+              (set! loaded-paths
+                    (cons (or (current-module-declare-source)
+                              (original-path)
+                              path)
+                          loaded-paths))
+              (cl path mod-name))))
+         
          (ep-log-info "expanding-place.rkt: 03 setting module language parameters")
          (set-module-language-parameters settings
                                          module-language-parallel-lock-client
@@ -114,9 +135,9 @@
             (parameterize ([current-custodian orig-cust])
               (thread
                (λ ()
-                 (channel-put normal-termination #t)
+                 (stop-watching-abnormal-termination)
                  (semaphore-post sema)
-                 (channel-put exn-chan exn))))
+                 (channel-put exn-chan (list exn loaded-paths)))))
             (semaphore-wait sema)
             ((error-escape-handler))))
          (ep-log-info "expanding-place.rkt: 07 starting read-syntax")
@@ -124,57 +145,67 @@
            (parameterize ([read-accept-reader #t])
              (read-syntax the-source sp)))
          (ep-log-info "expanding-place.rkt: 08 read")
-         (when (syntax? stx) ;; could be eof
-           (define-values (name lang transformed-stx)
-             (transform-module path
-                               (namespace-syntax-introduce stx)
-                               raise-hopeless-syntax-error))
-           (ep-log-info "expanding-place.rkt: 09 starting expansion")
-           (define log-io? (log-level? expanding-place-logger 'warning))
-           (define-values (in out) (if log-io? 
-                                       (make-pipe)
-                                       (values #f (open-output-nowhere))))
-           (define io-sema (make-semaphore 0))
-           (when log-io?
-             (thread (λ () (catch-and-log in io-sema))))
-           (define expanded 
-             (parameterize ([current-output-port out]
-                            [current-error-port out])
-               (expand transformed-stx)))
-           (when log-io?
-             (close-output-port out)
-             (semaphore-wait io-sema))
-           (channel-put old-registry-chan 
-                        (namespace-module-registry (current-namespace)))
-           (place-channel-put pc-status-expanding-place (void))
-           (ep-log-info "expanding-place.rkt: 10 expanded")
-           (define handler-results
-             (for/list ([handler (in-list handlers)])
-               (list (handler-key handler)
-                     ((handler-proc handler) expanded
-                                             path
-                                             the-source
-                                             orig-cust))))
-           (ep-log-info "expanding-place.rkt: 11 handlers finished")
-           
-           (parameterize ([current-custodian orig-cust])
-             (thread
-              (λ ()
-                (channel-put normal-termination #t)
-                (semaphore-post sema)
-                (channel-put result-chan handler-results))))
-           (semaphore-wait sema)
-           (ep-log-info "expanding-place.rkt: 12 finished"))))))
+         (when (eof-object? stx) 
+           (define-values (line col pos) (port-next-location sp))
+           (raise-read-eof-error "no program to process"
+                                 the-source
+                                 1 0 1 pos))
+         (define-values (name lang transformed-stx)
+           (transform-module path
+                             (namespace-syntax-introduce stx)
+                             raise-hopeless-syntax-error))
+         (ep-log-info "expanding-place.rkt: 09 starting expansion")
+         (define log-io? (log-level? expanding-place-logger 'warning))
+         (define-values (in out) (if log-io? 
+                                     (make-pipe)
+                                     (values #f (open-output-nowhere))))
+         (define io-sema (make-semaphore 0))
+         (when log-io?
+           (thread (λ () (catch-and-log in io-sema))))
+         (define expanded 
+           (parameterize ([current-output-port out]
+                          [current-error-port out])
+             (expand transformed-stx)))
+         (when log-io?
+           (close-output-port out)
+           (semaphore-wait io-sema))
+         (channel-put old-registry-chan 
+                      (namespace-module-registry (current-namespace)))
+         (place-channel-put pc-status-expanding-place 'finished-expansion)
+         (ep-log-info "expanding-place.rkt: 10 expanded")
+         (define handler-results
+           (for/list ([handler (in-list handlers)])
+             (list (handler-key handler)
+                   ((handler-proc handler) expanded
+                                           path
+                                           the-source
+                                           orig-cust))))
+         (ep-log-info "expanding-place.rkt: 11 handlers finished")
+         
+         (parameterize ([current-custodian orig-cust])
+           (thread
+            (λ ()
+              (stop-watching-abnormal-termination)
+              (semaphore-post sema)
+              (channel-put result-chan (list handler-results loaded-paths)))))
+         (semaphore-wait sema)
+         (ep-log-info "expanding-place.rkt: 12 finished")))))
   
   (thread
    (λ ()
-     (sync 
-      (handle-evt 
-       normal-termination
-       (λ (x) (void)))
-      (handle-evt 
-       (thread-dead-evt working-thd)
-       (λ (x) (channel-put abnormal-termination #t))))))
+     (let loop ([watch-dead? #t])
+       (sync 
+        (handle-evt 
+         normal-termination
+         (λ (x) (loop #f)))
+        (if watch-dead?
+            (handle-evt 
+             (thread-dead-evt working-thd)
+             (λ (x) 
+               (ep-log-info "expanding-place.rkt: abnormal termination")
+               (channel-put abnormal-termination #t)
+               (loop #f)))
+            never-evt)))))
   
   (thread
    (λ ()
@@ -182,50 +213,62 @@
       (handle-evt
        abnormal-termination
        (λ (val) 
+         (place-channel-put pc-status-expanding-place
+                            'abnormal-termination)
          (place-channel-put 
           response-pc
-          (vector 'abnormal-termination))))
+          (vector 'abnormal-termination 
+                  ;; note: this message is actually ignored: a string 
+                  ;; constant is used back in the drracket place
+                  "Expansion thread terminated unexpectedly"
+                  '()
+                  
+                  ;; give up on dep paths in this case:
+                  '()))))
       (handle-evt
        result-chan
-       (λ (val)
-         (place-channel-put response-pc (vector 'handler-results val))))
+       (λ (val+loaded-paths)
+         (place-channel-put response-pc (vector 'handler-results 
+                                                (list-ref val+loaded-paths 0)
+                                                (list-ref val+loaded-paths 1)))))
       (handle-evt
        exn-chan
-       (λ (exn)
+       (λ (exn+loaded-paths)
+         (place-channel-put pc-status-expanding-place 'exn-raised)
+         (define exn (list-ref exn+loaded-paths 0))
          (place-channel-put 
           response-pc
-          (cond
-            [(exn:access? exn)
-             (vector 'access-violation (exn-message exn))]
-            [else
-             (vector 
-              (cond
-                [(and (exn:fail:read? exn)
-                      (andmap (λ (srcloc) (equal? (srcloc-source srcloc) the-source))
-                              (exn:fail:read-srclocs exn)))
-                 'reader-in-defs-error]
-                [(regexp-match #rx"expand: unbound identifier" (exn-message exn))
-                 'exn:variable]
-                [else 'exn])
-              (trim-message 
-               (if (exn? exn) 
-                   (regexp-replace* #rx"[ \t]*\n[ \t]*" (exn-message exn) " ") 
-                   (format "uncaught exn: ~s" exn)))
-              (if (exn:srclocs? exn)
-                  (sort
-                   (filter
-                    values
-                    (for/list ([srcloc ((exn:srclocs-accessor exn) exn)])
-                      (and (srcloc? srcloc)
-                           (equal? the-source (srcloc-source srcloc))
-                           (srcloc-position srcloc)
-                           (srcloc-span srcloc)
-                           (vector (srcloc-position srcloc)
-                                   (srcloc-span srcloc)))))
-                   <
-                   #:key (λ (x) (vector-ref x 0)))
-                  '()))])))))))
-  (job cust response-pc working-thd))
+          (vector 
+           (cond
+             [(exn:access? exn)
+              'access-violation]
+             [(and (exn:fail:read? exn)
+                   (andmap (λ (srcloc) (equal? (srcloc-source srcloc) the-source))
+                           (exn:fail:read-srclocs exn)))
+              'reader-in-defs-error]
+             [(and (exn? exn)
+                   (regexp-match #rx"expand: unbound identifier" (exn-message exn)))
+              'exn:variable]
+             [else 'exn])
+           (trim-message 
+            (if (exn? exn) 
+                (regexp-replace* #rx"[ \t]*\n[ \t]*" (exn-message exn) " ") 
+                (format "uncaught exn: ~s" exn)))
+           (if (exn:srclocs? exn)
+               (sort
+                (for/list ([srcloc ((exn:srclocs-accessor exn) exn)]
+                           #:when (and (srcloc? srcloc)
+                                       (equal? the-source (srcloc-source srcloc))
+                                       (srcloc-position srcloc)
+                                       (srcloc-span srcloc)))
+                  (vector (srcloc-position srcloc)
+                          (srcloc-span srcloc)))
+                <
+                #:key (λ (x) (vector-ref x 0)))
+               '())
+           (list-ref exn+loaded-paths 1))))))))
+  
+  (job cust response-pc working-thd stop-watching-abnormal-termination))
 
 (define (catch-and-log port sema)
   (let loop ()
